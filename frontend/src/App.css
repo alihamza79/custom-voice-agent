@@ -2,16 +2,100 @@
 body { background: #0b1220; color: #e6edf3; font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, 'Apple Color Emoji', 'Segoe UI Emoji'; }
 
 .container { display: flex; flex-direction: column; gap: 16px; }
-header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; border-bottom: 1px solid #1f2a44; padding-bottom: 8px; }
+header { display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid #1f2a44; padding-bottom: 8px; }
+
+.header-top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 .meta { display: flex; gap: 12px; opacity: 0.9; font-size: 13px; }
 .pill { background: #14213d; border: 1px solid #263a61; padding: 4px 8px; border-radius: 999px; }
 
-.panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.panel { background: #0f172a; border: 1px solid #1f2a44; border-radius: 8px; overflow: hidden; }
+.latency-container { 
+  display: flex; 
+  gap: 8px; 
+  flex-wrap: wrap; 
+  margin-top: 8px; 
+  padding: 8px 0; 
+  border-top: 1px solid #1f2a44; 
+}
+
+.latency.response { 
+  background: #059669; 
+  border-color: #10b981; 
+  font-size: 14px; 
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.panels { 
+  display: grid; 
+  grid-template-columns: minmax(350px, 1fr) minmax(350px, 1fr) minmax(350px, 1fr); 
+  gap: 16px; 
+  width: 100%;
+  max-width: 1450px;
+  margin: 0 auto;
+  grid-auto-columns: 1fr;
+}
+
+@media (max-width: 1024px) {
+  .panels { grid-template-columns: 1fr 1fr; }
+  .panel:nth-child(3) { grid-column: 1 / -1; }
+}
+
+@media (max-width: 768px) {
+  .panels { grid-template-columns: 1fr; }
+  
+  .call-section {
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .response-time-display, .call-section h2 {
+    position: static;
+    text-align: center;
+  }
+}
+.panel { 
+  background: #0f172a; 
+  border: 1px solid #1f2a44; 
+  border-radius: 8px; 
+  overflow: hidden; 
+  min-width: 0;
+  width: 100%;
+}
 .panel h2 { margin: 0; padding: 10px 12px; border-bottom: 1px solid #1f2a44; font-size: 16px; font-weight: 600; background: #0b1220; }
-.scroll { height: 380px; overflow: auto; padding: 10px 12px; }
-.partial { opacity: 0.8; border-left: 3px solid #475569; padding-left: 8px; margin: 6px 0; }
-.final { opacity: 1; border-left: 3px solid #16a34a; padding-left: 8px; margin: 6px 0; }
+.scroll { 
+  height: 380px; 
+  overflow: auto; 
+  padding: 10px 12px; 
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+.partial { 
+  opacity: 0.8; 
+  border-left: 3px solid #475569; 
+  padding-left: 8px; 
+  margin: 6px 0; 
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+.final { 
+  opacity: 1; 
+  border-left: 3px solid #16a34a; 
+  padding-left: 8px; 
+  margin: 6px 0; 
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+.model-response { 
+  opacity: 1; 
+  border-left: 3px solid #3b82f6; 
+  padding-left: 8px; 
+  margin: 6px 0; 
+  color: #e0f2fe; 
+  font-size: 14px;
+  line-height: 1.4;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
 
 footer { opacity: 0.7; font-size: 12px; padding: 8px 0; }
 
@@ -45,6 +129,80 @@ footer { opacity: 0.7; font-size: 12px; padding: 8px 0; }
 
 .card {
   padding: 2em;
+}
+
+/* Call Button Styling */
+.call-section {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  margin-bottom: 16px;
+  padding: 16px 0;
+  position: relative;
+  width: 100%;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.response-time-display {
+  position: absolute;
+  left: 0;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+/* Response status styling removed */
+
+.call-section h2 {
+  position: absolute;
+  right: 0;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  opacity: 0.5;
+}
+
+.call-button {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  transition: transform 0.2s ease;
+  outline: none;
+}
+
+.call-button:hover {
+  transform: scale(1.05);
+}
+
+.call-button:focus {
+  outline: none;
+}
+
+.call-button.start {
+  background-color: #22c55e;
+}
+
+.call-button.end {
+  background-color: #ef4444;
+}
+
+.call-error {
+  color: #ef4444;
+  font-size: 14px;
+  margin-top: 8px;
+  text-align: center;
 }
 
 .read-the-docs {

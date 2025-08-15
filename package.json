@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "nodemon server.js",
-    "dev": "vite"
+    "frontend": "cd frontend && npm run dev",
+    "backend": "nodemon server.js"
   },
   "repository": {
     "type": "git",
