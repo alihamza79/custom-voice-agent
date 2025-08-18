@@ -57,8 +57,11 @@ let currentMediaStream = null;
 let reconnectAttempts = 0;
 const maxReconnectAttempts = 3;
 
-// Simple connection management - no complex pooling  
-let sttReconnectAttempts = 0;
+// STT Connection Management with Rate Limit Protection
+let globalSTTConnections = 0;
+const MAX_CONCURRENT_STT = 2; // Limit concurrent STT connections
+let lastConnectionError = 0;
+const CONNECTION_COOLDOWN = 10000; // 10 second cooldown after rate limit
 
 // Automatic greeting system
 let hasGreeted = new Set(); // Track which streamSids have been greeted
@@ -69,9 +72,14 @@ function sendAutomaticGreeting(mediaStream) {
     return; // Already greeted or no streamSid
   }
   
-  // Check if both STT and TTS are ready
-  const sttReady = mediaStream.deepgram && true; // STT is ready when this function is called
+  // Check if both STT and TTS are ready - with detailed logging
+  const sttReady = mediaStream.deepgram && true; // If deepgram exists, assume it's ready (this function is called on Open event)
   const ttsReady = sharedTTSWebSocket && sharedTTSWebSocket.readyState === 1;
+  
+  // Add detailed state logging
+  const sttState = mediaStream.deepgram ? 'exists' : 'null';
+  const ttsState = sharedTTSWebSocket ? sharedTTSWebSocket.readyState : 'null';
+  console.log(`🔍 Connection states - STT: ${sttState}, TTS: ${ttsState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
   
   if (sttReady && ttsReady) {
     console.log('🎙️ Sending automatic greeting to:', mediaStream.streamSid);
@@ -91,11 +99,19 @@ function sendAutomaticGreeting(mediaStream) {
       streamSid: mediaStream.threadId 
     })
       .then((result) => {
+        // Double-check connections are still active before sending TTS
+        if (!mediaStream.streamSid || hasGreeted.has(mediaStream.streamSid + '_sent')) {
+          return; // Connection closed or already sent
+        }
+        
         console.log('meeting-graph: auto-greeting result', { 
           systemPrompt: result?.systemPrompt?.substring(0, 50) + '...'
         });
         
         if (result && result.systemPrompt) {
+          // Mark as sent to prevent duplicates
+          hasGreeted.add(mediaStream.streamSid + '_sent');
+          
           // Set speaking state for TTS
           speaking = true;
           ttsStart = Date.now();
@@ -109,7 +125,14 @@ function sendAutomaticGreeting(mediaStream) {
       })
       .catch((e) => {
         console.error('meeting-graph: auto-greeting error', e);
+        
+        // Double-check connection is still active
+        if (!mediaStream.streamSid || hasGreeted.has(mediaStream.streamSid + '_sent')) {
+          return;
+        }
+        
         // Fallback greeting if LangGraph fails
+        hasGreeted.add(mediaStream.streamSid + '_sent');
         speaking = true;
         ttsStart = Date.now();
         firstByte = true;
@@ -120,6 +143,11 @@ function sendAutomaticGreeting(mediaStream) {
       });
   } else {
     console.log('⏳ Waiting for connections - STT ready:', sttReady, 'TTS ready:', ttsReady);
+    
+    // Retry greeting after a delay if connections aren't ready yet
+    if (!sttReady && mediaStream.streamSid) {
+      setTimeout(() => sendAutomaticGreeting(mediaStream), 2000);
+    }
   }
 }
 
@@ -148,19 +176,39 @@ function resetGlobalState() {
   send_first_sentence_input_time = null;
   currentMediaStream = null;
   streamSid = '';
+  // Reset connection tracking for new session
+  globalSTTConnections = 0;
+  lastConnectionError = 0;
   console.log('🔄 Complete global state reset');
 }
 
-// Robust STT connection with auto-reconnect
+// Robust STT connection with rate limit protection and exponential backoff
 function createSTTConnection(mediaStream) {
-  console.log(`STT: Creating connection`);
+  // Check rate limits and connection limits
+  const now = Date.now();
+  if (globalSTTConnections >= MAX_CONCURRENT_STT) {
+    console.warn(`STT: Too many connections (${globalSTTConnections}), refusing new connection`);
+    return null;
+  }
+  
+  if (now - lastConnectionError < CONNECTION_COOLDOWN) {
+    const remaining = Math.ceil((CONNECTION_COOLDOWN - (now - lastConnectionError)) / 1000);
+    console.warn(`STT: Connection cooldown active, ${remaining}s remaining`);
+    return null;
+  }
+  
+  console.log(`STT: Creating connection (${globalSTTConnections + 1}/${MAX_CONCURRENT_STT})`);
   
   let is_finals = [];
   let reconnectCount = 0;
   const maxReconnects = 3;
   let isReconnecting = false;
+  let connectionEstablished = false;
   
   function createConnection() {
+    globalSTTConnections++;
+    console.log(`STT: Active connections: ${globalSTTConnections}`);
+    
     const deepgram = deepgramClient.listen.live({
       // Model - use most stable settings
       model: "nova-2",
@@ -180,13 +228,23 @@ function createSTTConnection(mediaStream) {
       keep_alive: true
     });
     
+    // Track connection cleanup
+    const originalClose = deepgram.requestClose;
+    deepgram.requestClose = function() {
+      if (globalSTTConnections > 0) {
+        globalSTTConnections--;
+        console.log(`STT: Connection closed, active: ${globalSTTConnections}`);
+      }
+      return originalClose.call(this);
+    };
+    
     return deepgram;
   }
   
   let deepgram = createConnection();
   
-  // Auto-reconnect wrapper
-  function handleReconnect() {
+  // Smarter reconnect with exponential backoff and error categorization
+  function handleReconnect(error = null) {
     if (isReconnecting || reconnectCount >= maxReconnects || !mediaStream.streamSid) {
       if (!isReconnecting && reconnectCount >= maxReconnects) {
         console.warn('STT: Max reconnection attempts reached');
@@ -194,28 +252,60 @@ function createSTTConnection(mediaStream) {
       return;
     }
     
+    // Categorize errors
+    const errorMsg = error?.message || '';
+    const isRateLimit = errorMsg.includes('429') || errorMsg.includes('rate limit') || errorMsg.includes('too many');
+    const isAuthError = errorMsg.includes('401') || errorMsg.includes('403') || errorMsg.includes('unauthorized');
+    const isNetworkError = errorMsg.includes('network') || errorMsg.includes('non-101');
+    
+    // Don't reconnect on auth errors
+    if (isAuthError) {
+      console.error('STT: Authentication error, not reconnecting:', errorMsg);
+      lastConnectionError = Date.now();
+      return;
+    }
+    
+    // Handle rate limits with longer backoff
+    if (isRateLimit) {
+      console.warn('STT: Rate limit detected, longer backoff');
+      lastConnectionError = Date.now();
+      return; // Don't reconnect immediately on rate limits
+    }
+    
     isReconnecting = true;
     reconnectCount++;
-    console.log(`STT: Auto-reconnecting (${reconnectCount}/${maxReconnects})`);
+    
+    // Exponential backoff: 2s, 4s, 8s
+    const backoffDelay = Math.min(2000 * Math.pow(2, reconnectCount - 1), 10000);
+    console.log(`STT: Auto-reconnecting (${reconnectCount}/${maxReconnects}) in ${backoffDelay}ms`);
     
     setTimeout(() => {
       try {
+        if (!mediaStream.streamSid) {
+          console.log('STT: MediaStream closed during reconnect, aborting');
+          isReconnecting = false;
+          return;
+        }
+        
         const newDeepgram = createConnection();
         // Update the reference for the mediaStream
         mediaStream.deepgram = newDeepgram;
         setupSTTListeners(newDeepgram, mediaStream, is_finals, handleReconnect);
         isReconnecting = false;
+        console.log('STT: Reconnection successful');
       } catch (e) {
         console.warn('STT: Reconnection failed:', e.message);
         isReconnecting = false;
+        lastConnectionError = Date.now();
       }
-    }, 1000 * reconnectCount); // Progressive delay
+    }, backoffDelay);
   }
   
   // Add reset method to handleReconnect function
   handleReconnect.reset = () => {
     reconnectCount = 0;
     isReconnecting = false;
+    connectionEstablished = true;
   };
   
   return { deepgram, is_finals, handleReconnect };
@@ -296,9 +386,10 @@ dispatcher.onGet("/voice-token", function (req, res) {
 dispatcher.onPost("/twiml", function (req, res) {
   const websocketUrl = process.env.WEBSOCKET_URL || "wss://4a2b02bc82d8.ngrok-free.app/streams";
   
-  const twimlResponse = `<?xml version="1.0" encoding="UTF-8" ?>
+    const twimlResponse = `<?xml version="1.0" encoding="UTF-8" ?>
 <Response>
-<Say>Please hold, connecting you now.</Say>
+  <Say>Please hold, connecting you now.</Say>
+  <Play digits="ww2ww2ww2"/>
   <Connect>
     <Stream url="${websocketUrl}">
       <Parameter name="aCustomParameter" value="aCustomValue that was set in TwiML" />
@@ -329,7 +420,7 @@ mediaws.on("connect", function (connection) {
 class MediaStream {
   constructor(connection) {
     this.connection = connection;
-    this.deepgram = setupDeepgram(this);
+    this.deepgram = setupDeepgram(this); // May return null if rate limited
     this.deepgramTTSWebsocket = setupDeepgramWebsocket(this);
     connection.on("message", this.processMessage.bind(this));
     connection.on("close", this.close.bind(this));
@@ -342,6 +433,11 @@ class MediaStream {
     this.systemPrompt = 'You are helpful and concise.';
     // Track conversation thread for persistent memory
     this.threadId = null;
+    
+    // If STT connection failed, log it but don't crash
+    if (!this.deepgram) {
+      console.warn('MediaStream: STT connection failed, will retry later');
+    }
   }
 
   // Function to process incoming messages
@@ -380,7 +476,22 @@ class MediaStream {
         }
         if (data.media.track == "inbound") {
           let rawAudio = Buffer.from(data.media.payload, 'base64');
-          this.deepgram.send(rawAudio);
+          // Only send audio if STT connection exists
+          if (this.deepgram) {
+            this.deepgram.send(rawAudio);
+          } else {
+            // STT connection might be rate limited, attempt to retry setup
+            if (!this.sttRetryScheduled) {
+              this.sttRetryScheduled = true;
+              setTimeout(() => {
+                if (this.streamSid && !this.deepgram) {
+                  console.log('STT: Retrying connection setup for audio processing');
+                  this.deepgram = setupDeepgram(this);
+                  this.sttRetryScheduled = false;
+                }
+              }, 5000);
+            }
+          }
         }
       }
       if (data.event === "mark") {
@@ -398,6 +509,17 @@ class MediaStream {
   // Function to handle connection close
   close() {
     console.log("twilio: Closed - streamSid:", this.streamSid);
+    
+    // Clean up STT connection properly
+    if (this.deepgram) {
+      try {
+        this.deepgram.requestClose();
+      } catch (e) {
+        console.warn('STT: Error closing connection:', e.message);
+      }
+      this.deepgram = null;
+    }
+    
     // Clear currentMediaStream if it points to this connection
     if (currentMediaStream === this) {
       currentMediaStream = null;
@@ -405,15 +527,18 @@ class MediaStream {
       firstByte = true;
       console.log('🔄 Reset variables on connection close');
     }
+    
     // Clear global streamSid if it matches this connection
     if (streamSid === this.streamSid) {
       streamSid = '';
     }
+    
     // Clean up greeting history for this streamSid
     if (this.streamSid) {
       hasGreeted.delete(this.streamSid);
+      hasGreeted.delete(this.streamSid + '_sent');
+      console.log('🧹 Cleaned greeting history for:', this.streamSid);
     }
-    // STT cleanup will happen automatically when the connection closes
   }
 }
 
@@ -477,6 +602,15 @@ function containsAnyChars(str) {
   Shared Deepgram TTS WebSocket Connection
 */
 function createSharedTTSConnection() {
+  console.log('TTS: Creating WebSocket connection...');
+  
+  if (!process.env.DEEPGRAM_API_KEY) {
+    console.error('🚨 TTS: DEEPGRAM_API_KEY environment variable not set!');
+    return null;
+  }
+  
+  console.log('TTS: Using API key:', process.env.DEEPGRAM_API_KEY.substring(0, 8) + '...');
+  
   const options = {
     headers: {
       Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`
@@ -484,9 +618,18 @@ function createSharedTTSConnection() {
   };
   
   const ws = new WebSocket(deepgramTTSWebsocketURL, options);
+  
+  // Add connection timeout to detect stuck connections
+  const connectionTimeout = setTimeout(() => {
+    if (ws.readyState === 0) { // Still CONNECTING
+      console.warn('TTS: Connection timeout (15s), closing...');
+      ws.close();
+    }
+  }, 15000);
 
   ws.on('open', function open() {
-    console.log('TTS: Ready');
+    clearTimeout(connectionTimeout); // Clear timeout on successful connection
+    console.log('TTS: Ready ✅');
     reconnectAttempts = 0;
     
     // Try to send automatic greeting when TTS is ready (if currentMediaStream exists and has STT)
@@ -534,14 +677,32 @@ function createSharedTTSConnection() {
   });
 
   ws.on('close', function close(code, reason) {
-    console.log(`TTS: Connection closed (${code})`);
+    clearTimeout(connectionTimeout); // Clear timeout on close
+    console.log(`TTS: Connection closed (${code}) - ${reason || 'No reason provided'}`);
     sharedTTSWebSocket = null;
     speaking = false;
     currentMediaStream = null;
+    
+    // Automatically retry connection if it was unexpected close
+    if (code !== 1000 && reconnectAttempts < maxReconnectAttempts) {
+      reconnectAttempts++;
+      const delay = 2000 * reconnectAttempts;
+      console.log(`TTS: Auto-reconnecting in ${delay}ms (${reconnectAttempts}/${maxReconnectAttempts})`);
+      setTimeout(() => {
+        sharedTTSWebSocket = createSharedTTSConnection();
+      }, delay);
+    }
   });
 
   ws.on('error', function error(err) {
-    console.warn('TTS: Connection error:', err.message || 'Unknown');
+    clearTimeout(connectionTimeout); // Clear timeout on error
+    console.warn('TTS: Connection error:', err.message || err.code || 'Unknown error');
+    console.warn('TTS: Error details:', { 
+      message: err.message,
+      code: err.code,
+      type: err.type,
+      target: err.target?.url || 'unknown'
+    });
     sharedTTSWebSocket = null;
   });
   
@@ -553,6 +714,12 @@ function getSharedTTSConnection() {
   if (!sharedTTSWebSocket || sharedTTSWebSocket.readyState === WebSocket.CLOSED) {
     console.log('TTS: Creating new connection');
     sharedTTSWebSocket = createSharedTTSConnection();
+    if (!sharedTTSWebSocket) {
+      console.error('🚨 TTS: Failed to create connection!');
+      return null;
+    }
+  } else {
+    console.log(`TTS: Reusing existing connection (state: ${sharedTTSWebSocket.readyState})`);
   }
   return sharedTTSWebSocket;
 }
@@ -561,16 +728,31 @@ function getSharedTTSConnection() {
   Setup TTS for MediaStream (now uses shared connection)
 */
 const setupDeepgramWebsocket = (mediaStream) => {
-  return getSharedTTSConnection();
+  console.log('📞 Setting up TTS for MediaStream:', mediaStream.streamSid || 'no-streamSid');
+  const ttsConnection = getSharedTTSConnection();
+  console.log('📞 TTS connection state after setup:', ttsConnection ? ttsConnection.readyState : 'null');
+  return ttsConnection;
 }
 
 /*
-  Main STT setup function with auto-reconnect
+  Main STT setup function with auto-reconnect and fallback
 */
 const setupDeepgram = (mediaStream) => {
   console.log('STT: Setting up connection');
   
   const connectionData = createSTTConnection(mediaStream);
+  if (!connectionData) {
+    console.warn('STT: Connection creation failed, will retry later');
+    // Schedule retry with backoff
+    setTimeout(() => {
+      if (mediaStream.streamSid && !mediaStream.deepgram) {
+        console.log('STT: Retrying connection setup');
+        mediaStream.deepgram = setupDeepgram(mediaStream);
+      }
+    }, 5000);
+    return null;
+  }
+  
   const deepgram = connectionData.deepgram;
   let is_finals = connectionData.is_finals;
   const handleReconnect = connectionData.handleReconnect;
@@ -593,28 +775,36 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
     }
   }, 10 * 1000);
 
-  // Error handling with auto-reconnect
+  // Error handling with smart error categorization
   deepgram.addListener(LiveTranscriptionEvents.Error, async (error) => {
-    const errorMsg = error.message || 'Unknown error';
+    const errorMsg = error.message || error.toString() || 'Unknown error';
     console.warn("STT: Connection error:", errorMsg);
     if (keepAlive) clearInterval(keepAlive);
     
-    // Don't reconnect on authentication/permission errors
-    if (errorMsg.includes('401') || errorMsg.includes('403') || errorMsg.includes('unauthorized')) {
-      console.error('STT: Authentication error, not reconnecting');
-      return;
+    // Cleanup connection count on error
+    if (globalSTTConnections > 0) {
+      globalSTTConnections--;
+      console.log(`STT: Error cleanup, active connections: ${globalSTTConnections}`);
     }
     
-    handleReconnect(); // Trigger reconnection
+    // Pass full error object for smart categorization
+    handleReconnect(error);
   });
 
-  deepgram.addListener(LiveTranscriptionEvents.Close, async () => {
-    console.log("STT: Connection closed");
+  deepgram.addListener(LiveTranscriptionEvents.Close, async (code, reason) => {
+    console.log(`STT: Connection closed (${code}) - ${reason || 'Unknown reason'}`);
     if (keepAlive) clearInterval(keepAlive);
     
-    // Only reconnect if the call is still active
-    if (mediaStream.streamSid && currentMediaStream === mediaStream) {
-      handleReconnect(); // Trigger reconnection
+    // Cleanup connection count on close
+    if (globalSTTConnections > 0) {
+      globalSTTConnections--;
+      console.log(`STT: Close cleanup, active connections: ${globalSTTConnections}`);
+    }
+    
+    // Only reconnect if the call is still active and it wasn't a normal close
+    if (mediaStream.streamSid && currentMediaStream === mediaStream && code !== 1000) {
+      const closeError = { message: `Connection closed with code ${code}: ${reason}` };
+      handleReconnect(closeError);
     }
   });
 
@@ -623,8 +813,12 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
     // Reset reconnection state on successful connection
     if (handleReconnect.reset) handleReconnect.reset();
     
-    // Try to send automatic greeting when STT is ready
-    setTimeout(() => sendAutomaticGreeting(mediaStream), 500); // Small delay to ensure TTS is also ready
+    // Try to send automatic greeting when STT is ready, with multiple attempts
+    setTimeout(() => {
+      if (mediaStream.streamSid && !hasGreeted.has(mediaStream.streamSid)) {
+        sendAutomaticGreeting(mediaStream);
+      }
+    }, 1000); // Longer delay to ensure TTS is ready
 
     deepgram.addListener(LiveTranscriptionEvents.Transcript, (data) => {
       const transcript = data.channel.alternatives[0].transcript;
