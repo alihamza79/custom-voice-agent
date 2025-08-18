@@ -124,16 +124,25 @@ dispatcher.onGet("/voice-token", function (req, res) {
  Twilio streams.xml
 */
 dispatcher.onPost("/twiml", function (req, res) {
-  let filePath = path.join(__dirname + "/templates", "streams.xml");
-  let stat = fs.statSync(filePath);
+  const websocketUrl = process.env.WEBSOCKET_URL || "wss://4a2b02bc82d8.ngrok-free.app/streams";
+  
+  const twimlResponse = `<?xml version="1.0" encoding="UTF-8" ?>
+<Response>
+  <Say>how can i assist you today?</Say>
+  <Connect>
+    <Stream url="${websocketUrl}">
+      <Parameter name="aCustomParameter" value="aCustomValue that was set in TwiML" />
+    </Stream>
+  </Connect>
+  <Say>Goodbye.</Say>
+</Response>`;
 
   res.writeHead(200, {
     "Content-Type": "text/xml",
-    "Content-Length": stat.size,
+    "Content-Length": Buffer.byteLength(twimlResponse, 'utf8'),
   });
 
-  let readStream = fs.createReadStream(filePath);
-  readStream.pipe(res);
+  res.end(twimlResponse);
 });
 
 /*
