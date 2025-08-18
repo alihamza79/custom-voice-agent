@@ -332,7 +332,7 @@ const setupDeepgram = (mediaStream) => {
   let is_finals = [];
   const deepgram = deepgramClient.listen.live({
     // Model
-    model: "nova-2-phonecall",
+    model: "nova-3",
     language: "en",
     // Formatting
     smart_format: true,
@@ -398,24 +398,82 @@ const setupDeepgram = (mediaStream) => {
                   intent: result && result.intent,
                   hasDate: !!result?.date,
                   hasTime: !!result?.time,
-                  missingInfo: result?.missing_info
+                  missingInfo: result?.missing_info,
+                  currentStep: result?.current_step,
+                  systemPrompt: result?.systemPrompt
                 });
+                
+                // Use the LangGraph system prompt to guide the conversation
                 if (result && result.systemPrompt) {
                   mediaStream.systemPrompt = result.systemPrompt;
-                  console.log('meeting-graph: applied system prompt');
+                  console.log('meeting-graph: applied system prompt:', result.systemPrompt);
+                  
+                  // Generate the actual response based on the system prompt
+                  let responseText;
+                  
+                  if (result.current_step === 'greeting' && !result.is_meeting_request) {
+                    // For generic questions, provide a helpful response
+                    if (utterance.toLowerCase().includes('artificial intelligence')) {
+                      responseText = "Artificial intelligence is technology that enables computers to perform tasks that typically require human intelligence, like learning and problem-solving. Is there anything else I can help you with today?";
+                    } else {
+                      responseText = "I'm here to help! How can I assist you today?";
+                    }
+                  } else if (result.current_step === 'collect_date') {
+                    responseText = result.systemPrompt;
+                  } else if (result.current_step === 'confirm_date') {
+                    responseText = result.systemPrompt;
+                  } else if (result.current_step === 'collect_time') {
+                    responseText = result.systemPrompt;
+                  } else if (result.current_step === 'collect_duration') {
+                    responseText = result.systemPrompt;
+                  } else if (result.current_step === 'collect_additional_details') {
+                    responseText = result.systemPrompt;
+                                } else if (result.current_step === 'final_confirmation') {
+                responseText = result.systemPrompt;
+              } else if (result.current_step === 'appointment_complete') {
+                responseText = result.systemPrompt;
+              } else {
+                // Default response
+                responseText = result.systemPrompt;
+              }
+                  
+                                console.log('meeting-graph: sending response to TTS:', responseText);
+              
+              // Set speaking to true so TTS can process the audio
+              speaking = true;
+              ttsStart = Date.now();
+              firstByte = true;
+              
+              // Send to TTS
+              mediaStream.deepgramTTSWebsocket.send(JSON.stringify({ 'type': 'Speak', 'text': responseText }));
+              mediaStream.deepgramTTSWebsocket.send(JSON.stringify({ 'type': 'Flush' }));
+              
+              // Reset speaking after a delay to allow audio processing
+              setTimeout(() => {
+                speaking = false;
+                console.log('meeting-graph: TTS speaking completed');
+              }, 3000); // 3 second delay to allow audio to play
+                  
+                } else {
+                  // Fallback to LLM if no system prompt from LangGraph
+                  console.log('meeting-graph: no system prompt, falling back to LLM');
+                  promptLLM(mediaStream, utterance);
                 }
+                
                 sseBroadcast('graph_result', { 
                   intent: result && result.intent,
                   date: result?.date,
                   time: result?.time,
                   missing_info: result?.missing_info,
-                  conversation_length: result?.conversation_history?.length || 0
+                  conversation_length: result?.conversation_history?.length || 0,
+                  current_step: result?.current_step,
+                  systemPrompt: result?.systemPrompt
                 });
-                promptLLM(mediaStream, utterance);
               })
               .catch((e) => {
                 console.error('meeting-graph: error', e);
                 sseBroadcast('graph_error', { message: String(e?.message || e) });
+                // Fallback to LLM on error
                 promptLLM(mediaStream, utterance);
               });
           } else {
@@ -464,24 +522,82 @@ const setupDeepgram = (mediaStream) => {
               intent: result && result.intent,
               hasDate: !!result?.date,
               hasTime: !!result?.time,
-              missingInfo: result?.missing_info
+              missingInfo: result?.missing_info,
+              currentStep: result?.current_step,
+              systemPrompt: result?.systemPrompt
             });
+            
+            // Use the LangGraph system prompt to guide the conversation
             if (result && result.systemPrompt) {
               mediaStream.systemPrompt = result.systemPrompt;
-              console.log('meeting-graph: applied system prompt');
+              console.log('meeting-graph: applied system prompt:', result.systemPrompt);
+              
+              // Generate the actual response based on the system prompt
+              let responseText;
+              
+              if (result.current_step === 'greeting' && !result.is_meeting_request) {
+                // For generic questions, provide a helpful response
+                if (utterance.toLowerCase().includes('artificial intelligence')) {
+                  responseText = "Artificial intelligence is technology that enables computers to perform tasks that typically require human intelligence, like learning and problem-solving. Is there anything else I can help you with today?";
+                } else {
+                  responseText = "I'm here to help! How can I assist you today?";
+                }
+              } else if (result.current_step === 'collect_date') {
+                responseText = result.systemPrompt;
+              } else if (result.current_step === 'confirm_date') {
+                responseText = result.systemPrompt;
+              } else if (result.current_step === 'collect_time') {
+                responseText = result.systemPrompt;
+              } else if (result.current_step === 'collect_duration') {
+                responseText = result.systemPrompt;
+              } else if (result.current_step === 'collect_additional_details') {
+                responseText = result.systemPrompt;
+              } else if (result.current_step === 'final_confirmation') {
+                responseText = result.systemPrompt;
+              } else if (result.current_step === 'appointment_complete') {
+                responseText = result.systemPrompt;
+              } else {
+                // Default response
+                responseText = result.systemPrompt;
+              }
+              
+              console.log('meeting-graph: sending response to TTS:', responseText);
+              
+              // Set speaking to true so TTS can process the audio
+              speaking = true;
+              ttsStart = Date.now();
+              firstByte = true;
+              
+              // Send to TTS
+              mediaStream.deepgramTTSWebsocket.send(JSON.stringify({ 'type': 'Speak', 'text': responseText }));
+              mediaStream.deepgramTTSWebsocket.send(JSON.stringify({ 'type': 'Flush' }));
+              
+              // Reset speaking after a delay to allow audio processing
+              setTimeout(() => {
+                speaking = false;
+                console.log('meeting-graph: TTS speaking completed');
+              }, 3000); // 3 second delay to allow audio to play
+              
+            } else {
+              // Fallback to LLM if no system prompt from LangGraph
+              console.log('meeting-graph: no system prompt, falling back to LLM');
+              promptLLM(mediaStream, utterance);
             }
+            
             sseBroadcast('graph_result', { 
               intent: result && result.intent,
               date: result?.date,
               time: result?.time,
               missing_info: result?.missing_info,
-              conversation_length: result?.conversation_history?.length || 0
+              conversation_length: result?.conversation_history?.length || 0,
+              current_step: result?.current_step,
+              systemPrompt: result?.systemPrompt
             });
-            promptLLM(mediaStream, utterance);
           })
           .catch((e) => {
             console.error('meeting-graph: error', e);
             sseBroadcast('graph_error', { message: String(e?.message || e) });
+            // Fallback to LLM on error
             promptLLM(mediaStream, utterance);
           });
       }

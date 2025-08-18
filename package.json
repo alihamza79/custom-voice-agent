@@ -2,11 +2,11 @@
   "name": "deepgram-streaming-voice-agent",
   "version": "0.0.1",
   "description": "Streaming Voice Agent Sample",
-  "main": "server.js",
+  "main": "server-d.js",
   "scripts": {
-    "start": "nodemon server.js",
+    "start": "nodemon server-d.js",
     "frontend": "cd frontend && npm run dev",
-    "backend": "nodemon server.js"
+    "backend": "nodemon server-d.js"
   },
   "repository": {
     "type": "git",
