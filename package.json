@@ -6,7 +6,7 @@
   "scripts": {
     "start": "nodemon server-d.js",
     "frontend": "cd frontend && npm run dev",
-    "backend": "nodemon server-d.js"
+    "backend": "nodemon server.js"
   },
   "repository": {
     "type": "git",
