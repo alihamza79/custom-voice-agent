@@ -56,6 +56,7 @@ let sharedTTSWebSocket = null;
 let currentMediaStream = null;
 let reconnectAttempts = 0;
 const maxReconnectAttempts = 3;
+let ttsKeepAliveInterval = null;
 
 // STT Connection Management with Rate Limit Protection
 let globalSTTConnections = 0;
@@ -151,19 +152,38 @@ function sendAutomaticGreeting(mediaStream) {
   }
 }
 
-// Simplified and reliable TTS send function with better initial connection handling
-function safeTTSSend(websocket, message, retries = 15) {
-  if (!websocket) return;
+// Fixed TTS send function - always uses current shared connection
+function safeTTSSend(_, message, retries = 15) {
+  // ALWAYS use the current shared connection, ignore the passed websocket
+  const websocket = sharedTTSWebSocket;
+  
+  if (!websocket) {
+    console.warn('TTS: No shared connection available');
+    return;
+  }
   
   if (websocket.readyState === 1) { // OPEN
-    websocket.send(JSON.stringify(message));
+    try {
+      websocket.send(JSON.stringify(message));
+    } catch (e) {
+      console.warn('TTS: Send failed:', e.message);
+      // Force recreation of TTS connection
+      sharedTTSWebSocket = null;
+    }
   } else if (websocket.readyState === 0 && retries > 0) { // CONNECTING
-    // Wait longer for initial connection
+    // Wait for connection to open
     const delay = retries > 10 ? 300 : 100;
-    setTimeout(() => safeTTSSend(websocket, message, retries - 1), delay);
-  } else if (retries > 0) {
-    console.warn('TTS: Retrying connection...');
-    setTimeout(() => safeTTSSend(websocket, message, retries - 1), 500);
+    setTimeout(() => safeTTSSend(null, message, retries - 1), delay);
+  } else {
+    // Connection is closed or closing, force recreation
+    console.warn('TTS: Connection not ready, forcing recreation');
+    sharedTTSWebSocket = null;
+    if (retries > 0) {
+      setTimeout(() => {
+        getSharedTTSConnection(); // Create new connection
+        safeTTSSend(null, message, retries - 1);
+      }, 1000);
+    }
   }
 }
 
@@ -176,9 +196,19 @@ function resetGlobalState() {
   send_first_sentence_input_time = null;
   currentMediaStream = null;
   streamSid = '';
+  
+  // Clean up intervals
+  if (ttsKeepAliveInterval) {
+    clearInterval(ttsKeepAliveInterval);
+    ttsKeepAliveInterval = null;
+  }
+  
   // Reset connection tracking for new session
+  console.log(`🔄 Resetting STT connections from ${globalSTTConnections} to 0`);
   globalSTTConnections = 0;
   lastConnectionError = 0;
+  reconnectAttempts = 0; // Reset TTS reconnect attempts
+  
   console.log('🔄 Complete global state reset');
 }
 
@@ -228,12 +258,17 @@ function createSTTConnection(mediaStream) {
       keep_alive: true
     });
     
+    // Track connection cleanup with unique ID
+    const connectionId = `stt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    deepgram._connectionId = connectionId;
+    console.log(`STT: Connection created with ID: ${connectionId}`);
+    
     // Track connection cleanup
     const originalClose = deepgram.requestClose;
     deepgram.requestClose = function() {
       if (globalSTTConnections > 0) {
         globalSTTConnections--;
-        console.log(`STT: Connection closed, active: ${globalSTTConnections}`);
+        console.log(`STT: Connection ${connectionId} closed manually, active: ${globalSTTConnections}`);
       }
       return originalClose.call(this);
     };
@@ -632,6 +667,24 @@ function createSharedTTSConnection() {
     console.log('TTS: Ready ✅');
     reconnectAttempts = 0;
     
+    // Start keepalive to prevent timeout (every 25 seconds)
+    if (ttsKeepAliveInterval) clearInterval(ttsKeepAliveInterval);
+    ttsKeepAliveInterval = setInterval(() => {
+      if (ws.readyState === 1) {
+        // Send a small keep-alive message
+        try {
+          ws.send(JSON.stringify({ type: 'KeepAlive' }));
+          console.log('TTS: Keepalive sent');
+        } catch (e) {
+          console.warn('TTS: Keepalive failed:', e.message);
+          clearInterval(ttsKeepAliveInterval);
+        }
+      } else {
+        console.warn('TTS: Connection not ready for keepalive');
+        clearInterval(ttsKeepAliveInterval);
+      }
+    }, 25000); // Every 25 seconds
+    
     // Try to send automatic greeting when TTS is ready (if currentMediaStream exists and has STT)
     if (currentMediaStream && currentMediaStream.deepgram) {
       setTimeout(() => sendAutomaticGreeting(currentMediaStream), 100);
@@ -678,32 +731,50 @@ function createSharedTTSConnection() {
 
   ws.on('close', function close(code, reason) {
     clearTimeout(connectionTimeout); // Clear timeout on close
-    console.log(`TTS: Connection closed (${code}) - ${reason || 'No reason provided'}`);
-    sharedTTSWebSocket = null;
-    speaking = false;
-    currentMediaStream = null;
+    if (ttsKeepAliveInterval) {
+      clearInterval(ttsKeepAliveInterval);
+      ttsKeepAliveInterval = null;
+    }
     
-    // Automatically retry connection if it was unexpected close
+    console.log(`TTS: Connection closed (${code}) - ${reason || 'No reason provided'}`);
+    
+    // Only clear these if this was the active connection
+    if (sharedTTSWebSocket === ws) {
+      sharedTTSWebSocket = null;
+      speaking = false;
+      // Don't clear currentMediaStream here - let it stay for reconnection
+    }
+    
+    // Automatically retry connection if it was unexpected close (not normal close)
     if (code !== 1000 && reconnectAttempts < maxReconnectAttempts) {
       reconnectAttempts++;
-      const delay = 2000 * reconnectAttempts;
+      const delay = Math.min(2000 * reconnectAttempts, 10000); // Cap at 10 seconds
       console.log(`TTS: Auto-reconnecting in ${delay}ms (${reconnectAttempts}/${maxReconnectAttempts})`);
       setTimeout(() => {
-        sharedTTSWebSocket = createSharedTTSConnection();
+        if (!sharedTTSWebSocket || sharedTTSWebSocket.readyState === WebSocket.CLOSED) {
+          console.log('TTS: Creating replacement connection');
+          sharedTTSWebSocket = createSharedTTSConnection();
+        }
       }, delay);
+    } else if (code !== 1000) {
+      console.warn('TTS: Max reconnection attempts reached or permanent failure');
+      reconnectAttempts = 0; // Reset for next manual retry
     }
   });
 
   ws.on('error', function error(err) {
     clearTimeout(connectionTimeout); // Clear timeout on error
+    if (ttsKeepAliveInterval) {
+      clearInterval(ttsKeepAliveInterval);
+      ttsKeepAliveInterval = null;
+    }
+    
     console.warn('TTS: Connection error:', err.message || err.code || 'Unknown error');
-    console.warn('TTS: Error details:', { 
-      message: err.message,
-      code: err.code,
-      type: err.type,
-      target: err.target?.url || 'unknown'
-    });
-    sharedTTSWebSocket = null;
+    
+    // Only clear if this was the active connection
+    if (sharedTTSWebSocket === ws) {
+      sharedTTSWebSocket = null;
+    }
   });
   
   return ws;
@@ -778,13 +849,14 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
   // Error handling with smart error categorization
   deepgram.addListener(LiveTranscriptionEvents.Error, async (error) => {
     const errorMsg = error.message || error.toString() || 'Unknown error';
-    console.warn("STT: Connection error:", errorMsg);
+    const connId = deepgram._connectionId || 'unknown';
+    console.warn(`STT: Connection ${connId} error:`, errorMsg);
     if (keepAlive) clearInterval(keepAlive);
     
     // Cleanup connection count on error
     if (globalSTTConnections > 0) {
       globalSTTConnections--;
-      console.log(`STT: Error cleanup, active connections: ${globalSTTConnections}`);
+      console.log(`STT: Error cleanup for ${connId}, active connections: ${globalSTTConnections}`);
     }
     
     // Pass full error object for smart categorization
@@ -792,18 +864,19 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
   });
 
   deepgram.addListener(LiveTranscriptionEvents.Close, async (code, reason) => {
-    console.log(`STT: Connection closed (${code}) - ${reason || 'Unknown reason'}`);
+    const connId = deepgram._connectionId || 'unknown';
+    console.log(`STT: Connection ${connId} closed (${code}) - ${reason || 'Unknown reason'}`);
     if (keepAlive) clearInterval(keepAlive);
     
     // Cleanup connection count on close
     if (globalSTTConnections > 0) {
       globalSTTConnections--;
-      console.log(`STT: Close cleanup, active connections: ${globalSTTConnections}`);
+      console.log(`STT: Close cleanup for ${connId}, active connections: ${globalSTTConnections}`);
     }
     
     // Only reconnect if the call is still active and it wasn't a normal close
     if (mediaStream.streamSid && currentMediaStream === mediaStream && code !== 1000) {
-      const closeError = { message: `Connection closed with code ${code}: ${reason}` };
+      const closeError = { message: `Connection ${connId} closed with code ${code}: ${reason}` };
       handleReconnect(closeError);
     }
   });
@@ -1075,3 +1148,29 @@ wsserver.listen(HTTP_SERVER_PORT, function () {
 
 // Pre-compile LangGraph once at startup to reduce first-call latency
 prewarmMeetingGraph();
+
+// Periodic health check for connections (every 2 minutes)
+setInterval(() => {
+  const now = Date.now();
+  
+  // Check TTS connection health
+  if (sharedTTSWebSocket) {
+    if (sharedTTSWebSocket.readyState === WebSocket.CLOSED) {
+      console.log('🔄 Health check: TTS connection is closed, cleaning up');
+      sharedTTSWebSocket = null;
+      reconnectAttempts = 0;
+    } else if (sharedTTSWebSocket.readyState === WebSocket.CLOSING) {
+      console.log('🔄 Health check: TTS connection is closing');
+    }
+  }
+  
+  // Log current connection status
+  const ttsState = sharedTTSWebSocket ? sharedTTSWebSocket.readyState : 'null';
+  console.log(`📊 Health check - STT connections: ${globalSTTConnections}, TTS state: ${ttsState}, Current stream: ${currentMediaStream?.streamSid || 'none'}`);
+  
+  // Reset connection error cooldown if it's been long enough
+  if (lastConnectionError && now - lastConnectionError > CONNECTION_COOLDOWN) {
+    console.log('🔄 Connection error cooldown reset');
+    lastConnectionError = 0;
+  }
+}, 120000); // Every 2 minutes

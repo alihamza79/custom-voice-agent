@@ -184,6 +184,7 @@ function App() {
   const baseUrl = useMemo(() => {
     const env = import.meta.env;
     const url = env.VITE_BACKEND_URL || `${window.location.protocol}//${window.location.hostname}:8080`;
+    // const url = "https://custom-voice-agent.onrender.com"
     return url;
   }, []);
   const { events, setEvents } = useEventSource(`${baseUrl}/events`, 
