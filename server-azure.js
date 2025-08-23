@@ -185,7 +185,7 @@ const { runMeetingGraph, prewarmMeetingGraph } = require('./router');
 // Azure TTS Integration
 const sdk = require("microsoft-cognitiveservices-speech-sdk");
 
-// Azure TTS Configuration for ultra-low latency
+// Azure TTS Configuration for ultra-low latency streaming
 const AZURE_TTS_CONFIG = {
   // Use neural voices for better quality and lower latency
   voiceName: "en-US-AriaNeural", // Fast, natural voice
@@ -205,12 +205,13 @@ const AZURE_TTS_CONFIG = {
   prosodyPitch: "+0Hz" // Normal pitch
 };
 
-// Shared Azure TTS synthesizer
+// Shared Azure TTS synthesizer with streaming support
 let azureSynthesizer = null;
 let currentMediaStream = null;
 let reconnectAttempts = 0;
 const maxReconnectAttempts = 3;
 let ttsKeepAliveInterval = null;
+let currentSynthesisRequest = null; // Track current synthesis for cancellation
 
 // STT Connection Management with Rate Limit Protection
 let globalSTTConnections = 0;
@@ -281,9 +282,9 @@ function sendAutomaticGreeting(mediaStream) {
           ttsStart = Date.now();
           firstByte = true;
           
-          // Send greeting to Azure TTS
-          console.log('🔊 Auto-greeting Azure TTS:', result.systemPrompt);
-          synthesizeWithAzure(result.systemPrompt, mediaStream);
+          // Send greeting to Azure TTS with streaming
+          console.log('🔊 Auto-greeting Azure TTS (streaming):', result.systemPrompt);
+          synthesizeWithAzureStreaming(result.systemPrompt, mediaStream);
         }
       })
       .catch((e) => {
@@ -300,8 +301,8 @@ function sendAutomaticGreeting(mediaStream) {
         ttsStart = Date.now();
         firstByte = true;
         const fallbackGreeting = "Hello! I'm your voice assistant. How can I help you today?";
-        console.log('🔊 Fallback auto-greeting:', fallbackGreeting);
-        synthesizeWithAzure(fallbackGreeting, mediaStream);
+        console.log('🔊 Fallback auto-greeting (streaming):', fallbackGreeting);
+        synthesizeWithAzureStreaming(fallbackGreeting, mediaStream);
       });
   } else {
     console.log('⏳ Waiting for connections - STT ready:', sttReady, 'Azure TTS ready:', ttsReady);
@@ -313,14 +314,14 @@ function sendAutomaticGreeting(mediaStream) {
   }
 }
 
-// Azure TTS Synthesis Function with ultra-low latency optimization
-function synthesizeWithAzure(text, mediaStream, retries = 3) {
+// NEW: Real-time Azure TTS Streaming Function with minimal latency
+function synthesizeWithAzureStreaming(text, mediaStream, retries = 3) {
   if (!azureSynthesizer) {
     console.warn('Azure TTS: Synthesizer not ready');
     if (retries > 0) {
       setTimeout(() => {
         setupAzureTTS();
-        synthesizeWithAzure(text, mediaStream, retries - 1);
+        synthesizeWithAzureStreaming(text, mediaStream, retries - 1);
       }, 1000);
     }
     return;
@@ -329,6 +330,15 @@ function synthesizeWithAzure(text, mediaStream, retries = 3) {
   if (!text || text.trim().length === 0) {
     console.warn('Azure TTS: Empty text provided');
     return;
+  }
+
+  // Cancel any ongoing synthesis
+  if (currentSynthesisRequest) {
+    try {
+      currentSynthesisRequest.cancel();
+    } catch (e) {
+      console.warn('Azure TTS: Error canceling previous synthesis:', e);
+    }
   }
 
   // Create optimized SSML for ultra-low latency
@@ -341,103 +351,104 @@ function synthesizeWithAzure(text, mediaStream, retries = 3) {
       </voice>
     </speak>`;
 
-  console.log('Azure TTS: Starting synthesis...');
+  console.log('Azure TTS: Starting real-time streaming synthesis...');
 
-  // Use speakSsmlAsync for streaming with minimal latency
-  azureSynthesizer.speakSsmlAsync(
-    ssml,
-    (result) => {
-      if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
-        console.log('Azure TTS: Synthesis completed successfully');
-        
-        if (result.audioData && result.audioData.byteLength > 0) {
-          // Convert ArrayBuffer to Buffer for processing
-          const audioBuffer = Buffer.from(result.audioData);
-          
-          console.log(`Azure TTS: Generated ${audioBuffer.length} bytes of audio`);
-          
-          // Process audio in chunks for streaming to minimize latency
-          const chunkSize = 160; // 20ms chunks for 8kHz μ-law (160 bytes = 20ms)
-          let offset = 0;
-          
-          const sendAudioChunk = () => {
-            if (!speaking || !currentMediaStream || !currentMediaStream.connection) {
-              console.log('Azure TTS: Stopping audio send - speaking:', speaking);
-              return;
-            }
-            
-            if (offset < audioBuffer.length) {
-              const chunk = audioBuffer.slice(offset, Math.min(offset + chunkSize, audioBuffer.length));
-              
-              // Mark first byte timing
-              if (firstByte) {
-                const end = Date.now();
-                const duration = end - ttsStart;
-                console.log(`Azure TTS: First audio in ${duration}ms`);
-                firstByte = false;
-                if (send_first_sentence_input_time) {
-                  console.log(`Azure TTS: End-of-sentence to audio: ${end - send_first_sentence_input_time}ms`);
-                }
-                try { sseBroadcast('tts_first_byte_ms', { ms: duration }); } catch (_) {}
-              }
-              
-              // Send to Twilio
-              const payload = chunk.toString('base64');
-              const actualStreamSid = currentMediaStream.streamSid || streamSid;
-              const message = {
-                event: 'media',
-                streamSid: actualStreamSid,
-                media: { payload },
-              };
-              
-              currentMediaStream.connection.sendUTF(JSON.stringify(message));
-              
-              offset += chunkSize;
-              
-              // Schedule next chunk with minimal delay for streaming
-              setTimeout(sendAudioChunk, 10); // 10ms between chunks for smooth playback
-            } else {
-              // Audio completed
-              speaking = false;
-              console.log('Azure TTS: Audio streaming completed');
-            }
-          };
-          
-          // Start streaming audio chunks immediately
-          sendAudioChunk();
-        } else {
-          console.warn('Azure TTS: No audio data received');
-          speaking = false;
-        }
-      } else {
-        console.error('Azure TTS: Synthesis failed:', result.errorDetails);
-        speaking = false;
-        
-        // Retry with exponential backoff
-        if (retries > 0) {
-          const delay = (4 - retries) * 1000; // 1s, 2s, 3s delays
-          console.log(`Azure TTS: Retrying in ${delay}ms (${retries} attempts left)`);
-          setTimeout(() => synthesizeWithAzure(text, mediaStream, retries - 1), delay);
-        }
-      }
-    },
-    (error) => {
-      console.error('Azure TTS: Synthesis error:', error);
-      speaking = false;
+  // Setup streaming event handlers for real-time audio delivery
+  azureSynthesizer.synthesizing = (sender, event) => {
+    if (!speaking || !currentMediaStream || !currentMediaStream.connection) {
+      console.log('Azure TTS: Stopping streaming - speaking:', speaking);
+      return;
+    }
+
+    if (event.result.audioData && event.result.audioData.byteLength > 0) {
+      // Convert ArrayBuffer to Buffer for immediate streaming
+      const audioChunk = Buffer.from(event.result.audioData);
       
-      // Retry on error
+      // Mark first byte timing for minimal latency measurement
+      if (firstByte) {
+        const end = Date.now();
+        const duration = end - ttsStart;
+        console.log(`Azure TTS: First streaming audio in ${duration}ms`);
+        firstByte = false;
+        if (send_first_sentence_input_time) {
+          console.log(`Azure TTS: End-of-sentence to streaming audio: ${end - send_first_sentence_input_time}ms`);
+        }
+        try { sseBroadcast('tts_first_byte_ms', { ms: duration }); } catch (_) {}
+      }
+      
+      // Send audio chunk immediately to Twilio (no artificial chunking delay)
+      const payload = audioChunk.toString('base64');
+      const actualStreamSid = currentMediaStream.streamSid || streamSid;
+      const message = {
+        event: 'media',
+        streamSid: actualStreamSid,
+        media: { payload },
+      };
+      
+      currentMediaStream.connection.sendUTF(JSON.stringify(message));
+      console.log(`Azure TTS: Streamed ${audioChunk.length} bytes in real-time`);
+    }
+  };
+
+  // Handle synthesis completion
+  azureSynthesizer.synthesizeCompleted = (sender, event) => {
+    if (event.result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
+      console.log('Azure TTS: Real-time streaming synthesis completed');
+      speaking = false;
+      currentSynthesisRequest = null;
+    } else {
+      console.error('Azure TTS: Streaming synthesis failed:', event.result.errorDetails);
+      speaking = false;
+      currentSynthesisRequest = null;
+      
+      // Retry with exponential backoff
       if (retries > 0) {
-        const delay = (4 - retries) * 1000;
-        console.log(`Azure TTS: Retrying after error in ${delay}ms`);
-        setTimeout(() => synthesizeWithAzure(text, mediaStream, retries - 1), delay);
+        const delay = (4 - retries) * 1000; // 1s, 2s, 3s delays
+        console.log(`Azure TTS: Retrying streaming in ${delay}ms (${retries} attempts left)`);
+        setTimeout(() => synthesizeWithAzureStreaming(text, mediaStream, retries - 1), delay);
       }
     }
-  );
+  };
+
+  // Handle synthesis cancellation
+  azureSynthesizer.synthesizeCanceled = (sender, event) => {
+    console.log('Azure TTS: Synthesis canceled:', event.result.errorDetails || 'User interrupted');
+    speaking = false;
+    currentSynthesisRequest = null;
+  };
+
+  // Start real-time synthesis with streaming events
+  try {
+    currentSynthesisRequest = azureSynthesizer.speakSsmlAsync(
+      ssml,
+      (result) => {
+        // This callback is for final completion, streaming happens in synthesizing event
+        console.log('Azure TTS: Final synthesis callback completed');
+        currentSynthesisRequest = null;
+      },
+      (error) => {
+        console.error('Azure TTS: Streaming synthesis error:', error);
+        speaking = false;
+        currentSynthesisRequest = null;
+        
+        // Retry on error
+        if (retries > 0) {
+          const delay = (4 - retries) * 1000;
+          console.log(`Azure TTS: Retrying streaming after error in ${delay}ms`);
+          setTimeout(() => synthesizeWithAzureStreaming(text, mediaStream, retries - 1), delay);
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Azure TTS: Failed to start streaming synthesis:', error);
+    speaking = false;
+    currentSynthesisRequest = null;
+  }
 }
 
-// Setup Azure TTS with optimal configuration
+// Setup Azure TTS with streaming optimization
 function setupAzureTTS() {
-  console.log('Azure TTS: Setting up synthesizer...');
+  console.log('Azure TTS: Setting up streaming synthesizer...');
   
   if (!process.env.SPEECH_KEY || !process.env.SPEECH_REGION) {
     console.error('🚨 Azure TTS: Missing SPEECH_KEY or SPEECH_REGION environment variables!');
@@ -448,26 +459,27 @@ function setupAzureTTS() {
     // Create speech configuration
     const speechConfig = sdk.SpeechConfig.fromSubscription(process.env.SPEECH_KEY, process.env.SPEECH_REGION);
     
-    // Configure for ultra-low latency
+    // Configure for ultra-low latency streaming
     speechConfig.speechSynthesisVoiceName = AZURE_TTS_CONFIG.voiceName;
     speechConfig.speechSynthesisOutputFormat = AZURE_TTS_CONFIG.outputFormat;
     
-    // Enable streaming for minimal latency
+    // Enable real-time streaming for minimal latency
     speechConfig.setProperty(sdk.PropertyId.Speech_StreamingLatency, AZURE_TTS_CONFIG.streamingLatency);
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_SynthEnableCompressedAudioTransmission, "true");
     
-    // Optimize for real-time scenarios
-    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "5000");
-    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "500");
+    // Optimize for real-time scenarios with streaming
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "3000");
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "300");
     
-    // Create synthesizer with null audio config for manual audio handling
+    // Enable streaming synthesis
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_SynthStreamChunkSize, "8192");
+    
+    // Create synthesizer with null audio config for manual streaming handling
     azureSynthesizer = new sdk.SpeechSynthesizer(speechConfig, null);
     
-    console.log('Azure TTS: Synthesizer ready ✅');
-    console.log(`Azure TTS: Using voice: ${AZURE_TTS_CONFIG.voiceName}`);
+    console.log('Azure TTS: Streaming synthesizer ready ✅');
+    console.log(`Azure TTS: Using voice: ${AZURE_TTS_CONFIG.voiceName} with real-time streaming`);
     console.log(`Azure TTS: Output format: μ-law 8kHz for Twilio compatibility`);
-    
-    // Remove warm-up delay for immediate greeting
-    console.log('Azure TTS: Synthesizer ready for immediate use ✅');
     
     reconnectAttempts = 0;
     
@@ -479,7 +491,7 @@ function setupAzureTTS() {
     return azureSynthesizer;
     
   } catch (error) {
-    console.error('Azure TTS: Setup error:', error);
+    console.error('Azure TTS: Streaming setup error:', error);
     azureSynthesizer = null;
     return null;
   }
@@ -496,6 +508,15 @@ function resetGlobalState() {
   streamSid = '';
   
   // Clean up Azure TTS if needed
+  if (currentSynthesisRequest) {
+    try {
+      currentSynthesisRequest.cancel();
+    } catch (e) {
+      console.warn('Azure TTS: Error canceling synthesis request:', e);
+    }
+    currentSynthesisRequest = null;
+  }
+  
   if (azureSynthesizer) {
     try {
       azureSynthesizer.close();
@@ -764,7 +785,6 @@ dispatcher.onPost("/twiml", function (req, res) {
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8" ?>
 <Response>
   <Say>Please hold, connecting you now.</Say>
-  <Play digits="ww2ww2ww2"/>
   <Connect>
     <Stream url="${websocketUrl}">
       <Parameter name="aCustomParameter" value="aCustomValue that was set in TwiML" />
@@ -964,8 +984,8 @@ async function promptLLM(mediaStream, prompt) {
           send_first_sentence_input_time = Date.now();
         }
         
-        // Send incremental text to Azure TTS for streaming
-        synthesizeWithAzure(chunk_message, mediaStream);
+        // Send incremental text to Azure TTS for real-time streaming
+        synthesizeWithAzureStreaming(chunk_message, mediaStream);
       }
     }
   }
@@ -1139,7 +1159,7 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
                   // Use the system prompt directly from LangGraph - all logic is now centralized in router.js
                   const responseText = result.systemPrompt;
                   
-                  console.log('meeting-graph: sending response to Azure TTS:', responseText);
+                  console.log('meeting-graph: sending response to Azure TTS (streaming):', responseText);
               
                   // Set this as the current active MediaStream for TTS audio routing
                   currentMediaStream = mediaStream;
@@ -1149,8 +1169,8 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
                   ttsStart = Date.now();
                   firstByte = true;
                   
-                  // Send to Azure TTS
-                  synthesizeWithAzure(responseText, mediaStream);
+                  // Send to Azure TTS with real-time streaming
+                  synthesizeWithAzureStreaming(responseText, mediaStream);
                   
                 } else {
                   // Fallback to LLM if no system prompt from LangGraph
@@ -1194,22 +1214,22 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
           
           if (speaking) {
             console.log('twilio: clear audio playback', streamSid);
-            // Handles Barge In - stop Azure TTS
+            // Handles Barge In - stop Azure TTS streaming
             const messageJSON = JSON.stringify({
               "event": "clear",
               "streamSid": streamSid,
             });
             mediaStream.connection.sendUTF(messageJSON);
             
-            // Stop Azure TTS synthesis
-            if (azureSynthesizer) {
+            // Stop Azure TTS streaming synthesis
+            if (currentSynthesisRequest) {
               try {
-                // Azure TTS doesn't have a direct "clear" command, so we stop by setting speaking to false
-                speaking = false;
-                console.log('Azure TTS: Stopped due to barge-in');
+                currentSynthesisRequest.cancel();
+                console.log('Azure TTS: Streaming synthesis canceled due to barge-in');
               } catch (e) {
-                console.warn('Azure TTS: Error stopping synthesis:', e);
+                console.warn('Azure TTS: Error canceling streaming synthesis:', e);
               }
+              currentSynthesisRequest = null;
             }
             
             speaking = false;
@@ -1255,7 +1275,7 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
               // Use the system prompt directly from LangGraph - all logic is now centralized in router.js
               const responseText = result.systemPrompt;
               
-              console.log('meeting-graph: sending response to Azure TTS:', responseText);
+              console.log('meeting-graph: sending response to Azure TTS (streaming):', responseText);
               
               // Set this as the current active MediaStream for TTS audio routing
               currentMediaStream = mediaStream;
@@ -1265,8 +1285,8 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
               ttsStart = Date.now();
               firstByte = true;
               
-              // Send to Azure TTS
-              synthesizeWithAzure(responseText, mediaStream);
+              // Send to Azure TTS with real-time streaming
+              synthesizeWithAzureStreaming(responseText, mediaStream);
               
               // Clear meeting data if appointment is complete
               if (result.current_step === 'appointment_complete') {
@@ -1325,8 +1345,8 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
 wsserver.listen(HTTP_SERVER_PORT, function () {
   console.log("Server listening on: http://localhost:%s", HTTP_SERVER_PORT);
   
-  // Initialize Azure TTS at startup
-  console.log("🚀 Initializing Azure TTS...");
+  // Initialize Azure TTS streaming at startup
+  console.log("🚀 Initializing Azure TTS with real-time streaming...");
   setupAzureTTS();
 });
 
@@ -1339,7 +1359,7 @@ setInterval(() => {
   
   // Check Azure TTS synthesizer health
   if (azureSynthesizer) {
-    console.log('🔄 Health check: Azure TTS synthesizer is ready');
+    console.log('🔄 Health check: Azure TTS streaming synthesizer is ready');
   } else {
     console.log('🔄 Health check: Azure TTS synthesizer not ready, reinitializing...');
     setupAzureTTS();
@@ -1347,7 +1367,7 @@ setInterval(() => {
   
   // Log current connection status
   const ttsState = azureSynthesizer ? 'ready' : 'null';
-  console.log(`📊 Health check - STT connections: ${globalSTTConnections}, Azure TTS state: ${ttsState}, Current stream: ${currentMediaStream?.streamSid || 'none'}`);
+  console.log(`📊 Health check - STT connections: ${globalSTTConnections}, Azure TTS state: ${ttsState}, Current stream: ${currentMediaStream?.streamSid || 'none'}, Active synthesis: ${currentSynthesisRequest ? 'yes' : 'no'}`);
   
   // Reset connection error cooldown if it's been long enough
   if (lastConnectionError && now - lastConnectionError > CONNECTION_COOLDOWN) {
