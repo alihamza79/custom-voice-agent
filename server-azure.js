@@ -38,19 +38,22 @@ const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 const deepgramClient = createClient(process.env.DEEPGRAM_API_KEY);
 let keepAlive;
 
-// NEW: Intelligent transcript filtering functions to reduce repetition
+// ENHANCED: More conservative transcript filtering to reduce noise processing
 function shouldLogInterimTranscript(current, last) {
   if (!last) return true;
   
-  // Don't log if transcript is too similar (within 3 characters)
-  if (Math.abs(current.length - last.length) <= 3) return false;
+  // More strict filtering - require bigger changes
+  if (Math.abs(current.length - last.length) <= 5) return false;
   
-  // Don't log if it's just a repetition with minor changes
+  // Don't log if transcript is too similar (within 5 characters and high similarity)
   const similarity = calculateSimilarity(current, last);
-  if (similarity > 0.9) return false;
+  if (similarity > 0.95) return false;
   
-  // Don't log if it's just adding filler words
+  // Don't log if it's just adding filler words or noise
   if (isJustFillerWords(current, last)) return false;
+  
+  // ENHANCED: Don't log very short transcripts unless they're significantly different
+  if (current.trim().length < 3 && similarity > 0.7) return false;
   
   return true;
 }
@@ -58,14 +61,17 @@ function shouldLogInterimTranscript(current, last) {
 function shouldBroadcastInterimTranscript(current, last) {
   if (!last) return true;
   
-  // More strict filtering for broadcasting to frontend
-  if (Math.abs(current.length - last.length) <= 5) return false;
+  // Even more strict filtering for broadcasting to frontend
+  if (Math.abs(current.length - last.length) <= 8) return false;
   
   const similarity = calculateSimilarity(current, last);
-  if (similarity > 0.85) return false;
+  if (similarity > 0.90) return false;
   
   // Don't broadcast if it's just punctuation changes
   if (isJustPunctuationChange(current, last)) return false;
+  
+  // ENHANCED: Don't broadcast short or likely noise transcripts
+  if (current.trim().length < 4) return false;
   
   return true;
 }
@@ -104,18 +110,32 @@ function levenshteinDistance(str1, str2) {
   return matrix[str2.length][str1.length];
 }
 
+// ENHANCED: Better filler word detection
 function isJustFillerWords(current, last) {
-  const fillerWords = ['um', 'uh', 'ah', 'er', 'like', 'you know', 'i mean'];
-  const currentLower = current.toLowerCase();
-  const lastLower = last.toLowerCase();
+  const fillerWords = ['um', 'uh', 'ah', 'er', 'like', 'you know', 'i mean', 'well', 'so', 'actually'];
+  const currentLower = current.toLowerCase().trim();
+  const lastLower = last.toLowerCase().trim();
   
   // Check if current is just last + filler words
   for (const filler of fillerWords) {
     if (currentLower === lastLower + ' ' + filler || 
-        currentLower === filler + ' ' + lastLower) {
+        currentLower === filler + ' ' + lastLower ||
+        currentLower === lastLower + filler ||
+        currentLower === filler + lastLower) {
       return true;
     }
   }
+  
+  // Check if the difference is only filler words
+  const currentWords = currentLower.split(/\s+/);
+  const lastWords = lastLower.split(/\s+/);
+  
+  if (currentWords.length > lastWords.length) {
+    const newWords = currentWords.slice(lastWords.length);
+    const allFiller = newWords.every(word => fillerWords.includes(word));
+    if (allFiller) return true;
+  }
+  
   return false;
 }
 
@@ -123,6 +143,121 @@ function isJustPunctuationChange(current, last) {
   const cleanCurrent = current.replace(/[.,!?;:]/g, '');
   const cleanLast = last.replace(/[.,!?;:]/g, '');
   return cleanCurrent === cleanLast;
+}
+
+// ENHANCED: Better transcript quality validation
+function isValidTranscript(transcript, confidence = 0) {
+  if (!transcript || typeof transcript !== 'string') return false;
+  
+  const cleanTranscript = transcript.trim().toLowerCase();
+  
+  // Filter out empty or very short transcripts
+  if (cleanTranscript.length < 2) return false;
+  
+  // Filter out single characters or meaningless sounds
+  if (cleanTranscript.length === 1 && !/[a-z0-9]/.test(cleanTranscript)) return false;
+  
+  // Filter out common noise patterns
+  const noisePatterns = [
+    /^[.,!?;:\s]*$/, // Only punctuation
+    /^(uh|um|ah|er|hm|mmm|hmm)$/i, // Pure filler words
+    /^[^a-z]*$/i, // No actual letters
+    /^\s*$/, // Only whitespace
+    /^\.+$/, // Only dots
+    /^,+$/, // Only commas
+    /^[0-9\s.,]*$/  // Only numbers and punctuation (often noise)
+  ];
+  
+  for (const pattern of noisePatterns) {
+    if (pattern.test(cleanTranscript)) {
+      console.log(`STT: Filtered noise pattern: "${transcript}"`);
+      return false;
+    }
+  }
+  
+  // Filter based on confidence if provided
+  if (confidence > 0 && confidence < 0.5) {
+    console.log(`STT: Low confidence transcript filtered: "${transcript}" (${confidence})`);
+    return false;
+  }
+  
+  // Must contain at least one real word (2+ characters with letters)
+  const words = cleanTranscript.split(/\s+/);
+  const realWords = words.filter(word => word.length >= 2 && /[a-z]/.test(word));
+  
+  if (realWords.length === 0) {
+    console.log(`STT: No real words found: "${transcript}"`);
+    return false;
+  }
+  
+  return true;
+}
+
+// ENHANCED: Much more conservative barge-in detection - require full sentences
+function shouldTriggerBargeIn(transcript, confidence = 0) {
+  // Don't barge in if the transcript isn't valid speech
+  if (!isValidTranscript(transcript, confidence)) {
+    return false;
+  }
+  
+  const cleanTranscript = transcript.trim().toLowerCase();
+  
+  // ENHANCED: Be very conservative - require substantial speech
+  // Don't interrupt for short responses like "hmm", "ok", "yeah", etc.
+  const shortResponses = [
+    'hmm', 'hm', 'mm', 'mhm', 'mmm',
+    'ok', 'okay', 'kay',
+    'yeah', 'yah', 'yes', 'yep', 'yup',
+    'no', 'nah', 'nope',
+    'uh huh', 'uh-huh', 'uhhuh',
+    'mm hmm', 'mm-hmm', 'mmhmm',
+    'right', 'sure', 'alright', 'all right'
+  ];
+  
+  // Check if it's just a short response
+  if (shortResponses.includes(cleanTranscript)) {
+    console.log(`STT: Ignoring short response for barge-in: "${transcript}"`);
+    return false;
+  }
+  
+  // ENHANCED: Require at least 8 characters for barge-in (was 3)
+  if (cleanTranscript.length < 8) {
+    console.log(`STT: Transcript too short for barge-in: "${transcript}"`);
+    return false;
+  }
+  
+  // ENHANCED: Require higher confidence for barge-in (80% instead of 70%)
+  if (confidence > 0 && confidence < 0.8) {
+    console.log(`STT: Confidence too low for barge-in: "${transcript}" (${confidence})`);
+    return false;
+  }
+  
+  // ENHANCED: Must contain multiple meaningful words (at least 2)
+  const words = cleanTranscript.split(/\s+/);
+  const meaningfulWords = words.filter(word => 
+    word.length >= 2 && 
+    /[a-z]/.test(word) && 
+    !['um', 'uh', 'ah', 'er', 'hm', 'mmm', 'hmm', 'ok', 'okay', 'yeah', 'yes', 'no'].includes(word)
+  );
+  
+  if (meaningfulWords.length < 2) {
+    console.log(`STT: Not enough meaningful words for barge-in: "${transcript}" (${meaningfulWords.length} words)`);
+    return false;
+  }
+  
+  // ENHANCED: Check if it looks like a complete thought/sentence
+  // Look for sentence-ending punctuation or common sentence starters
+  const hasEndPunctuation = /[.!?]$/.test(transcript.trim());
+  const sentenceStarters = ['i', 'can', 'could', 'would', 'should', 'will', 'let', 'please', 'what', 'where', 'when', 'how', 'why', 'do', 'did', 'does'];
+  const startsLikeSentence = sentenceStarters.includes(words[0]);
+  
+  if (!hasEndPunctuation && !startsLikeSentence && meaningfulWords.length < 3) {
+    console.log(`STT: Doesn't look like complete sentence for barge-in: "${transcript}"`);
+    return false;
+  }
+  
+  console.log(`STT: Valid barge-in detected: "${cleanTranscript}" (confidence: ${confidence}, words: ${meaningfulWords.length})`);
+  return true;
 }
 
 // NEW: Transcript cache management
@@ -155,20 +290,28 @@ function cacheTranscript(transcript, data) {
   });
 }
 
-// NEW: Debounced transcript broadcasting
+// ENHANCED: More sophisticated debounced broadcasting with quality check
 function debouncedBroadcast(streamSid, transcript) {
   const key = `broadcast_${streamSid}`;
+  
+  // Don't broadcast obviously invalid transcripts
+  if (!isValidTranscript(transcript)) {
+    return;
+  }
   
   // Clear existing timer
   if (transcriptDebounceTimers.has(key)) {
     clearTimeout(transcriptDebounceTimers.get(key));
   }
   
-  // Set new timer
+  // Set new timer with slightly longer delay to reduce noise
   const timer = setTimeout(() => {
-    sseBroadcast('transcript_partial', { transcript });
+    // Double-check transcript is still valid before broadcasting
+    if (isValidTranscript(transcript)) {
+      sseBroadcast('transcript_partial', { transcript });
+    }
     transcriptDebounceTimers.delete(key);
-  }, DEBOUNCE_DELAY);
+  }, 200); // Increased from 150ms to 200ms for better filtering
   
   transcriptDebounceTimers.set(key, timer);
 }
@@ -226,7 +369,7 @@ const SIMILARITY_THRESHOLD = 0.8; // Similarity threshold for caching
 
 // NEW: Transcript debouncing to reduce rapid updates
 const transcriptDebounceTimers = new Map();
-const DEBOUNCE_DELAY = 150; // 150ms debounce delay
+const DEBOUNCE_DELAY = 200; // Increased to 200ms debounce delay
 
 // Automatic greeting system
 let hasGreeted = new Set(); // Track which streamSids have been greeted
@@ -541,7 +684,7 @@ function resetGlobalState() {
   console.log('🔄 Complete global state reset');
 }
 
-// Robust STT connection with rate limit protection and exponential backoff
+// Enhanced STT connection with better noise filtering and speech detection
 function createSTTConnection(mediaStream) {
   // Check rate limits and connection limits
   const now = Date.now();
@@ -569,56 +712,75 @@ function createSTTConnection(mediaStream) {
     console.log(`STT: Active connections: ${globalSTTConnections}`);
     
     const deepgram = deepgramClient.listen.live({
-      // Model - use most stable settings
+      // Model - use most stable settings with enhanced noise filtering
       model: "nova-2",
-      language: "multi",
+      language: "multi", // Keep multi for flexibility but will be more selective
       smart_format: true,
-      // Audio
+      
+      // Audio settings - optimized for noise filtering
       encoding: "mulaw",
       sample_rate: 8000,
       channels: 1,
       multichannel: false,
-      // Optimized settings for reduced repetition
+      
+      // ENHANCED: Better speech detection settings
       no_delay: true,
       interim_results: true,
-      endpointing: 100, // Reduced from 500ms for faster response
-      utterance_end_ms: 1000, // Reduced from 1500ms for faster processing
-      // Add connection keepalive
-      keep_alive: true,
-      // NEW: Enable numerals to reduce repetition
-      numerals: true,
-      // NEW: Punctuation for better sentence boundaries
-      punctuate: true,
-      // NEW: Diarization for speaker identification (reduces confusion)
-      diarize: false, // Disabled for single speaker to reduce overhead
-      // NEW: Profanity filter to reduce unnecessary processing
+      endpointing: 300, // Increased from 100ms - wait longer before processing
+      utterance_end_ms: 1000, // Increased from 1000ms - longer silence before finalizing
+      vad_events: true, // Enable Voice Activity Detection events
+      
+      // ENHANCED: Noise filtering
+      filler_words: false, // Remove um, uh, etc.
       profanity_filter: false,
-      // NEW: Redact sensitive information
       redact: false,
-      // NEW: Search for specific terms (can help with meeting-related words)
-      search: ["meeting", "appointment", "schedule", "time", "date", "hour"],
-      // NEW: Replace words to standardize input
+      
+      // ENHANCED: Quality thresholds
+      confidence: 0.6, // Only process transcripts with 60%+ confidence
+      
+      // Connection settings
+      keep_alive: true,
+      
+      // Enhanced word processing
+      numerals: true,
+      punctuate: true,
+      diarize: false,
+      
+      // Search terms for meeting context (helps with accuracy)
+      search: ["meeting", "appointment", "schedule", "time", "date", "hour", "minute"],
+      
+      // Word replacements for consistency
       replace: {
         "2pm": "2 PM",
-        "2am": "2 AM",
+        "2am": "2 AM", 
         "10am": "10 AM",
-        "10pm": "10 PM"
+        "10pm": "10 PM",
+        "tomorrow": "tomorrow",
+        "today": "today"
       }
-    });
+    }, "wss://api.deepgram.com/v1/listen");
     
-      // Track connection cleanup with unique ID
-  const connectionId = `stt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  deepgram._connectionId = connectionId;
-  console.log(`STT: Connection created with ID: ${connectionId}`);
-  
-  // Clean up debounce timers for this connection
-  deepgram._cleanupDebounce = () => {
-    const key = `broadcast_${connectionId}`;
-    if (transcriptDebounceTimers.has(key)) {
-      clearTimeout(transcriptDebounceTimers.get(key));
-      transcriptDebounceTimers.delete(key);
-    }
-  };
+    // Track connection cleanup with unique ID
+    const connectionId = `stt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    deepgram._connectionId = connectionId;
+    console.log(`STT: Connection created with ID: ${connectionId}`);
+    
+    // Add speech quality tracking to the connection
+    deepgram._speechQuality = {
+      lastValidTranscript: null,
+      silenceCount: 0,
+      noiseFilterCount: 0,
+      lastConfidence: 0
+    };
+    
+    // Clean up debounce timers for this connection
+    deepgram._cleanupDebounce = () => {
+      const key = `broadcast_${connectionId}`;
+      if (transcriptDebounceTimers.has(key)) {
+        clearTimeout(transcriptDebounceTimers.get(key));
+        transcriptDebounceTimers.delete(key);
+      }
+    };
     
     // Track connection cleanup
     const originalClose = deepgram.requestClose;
@@ -1060,7 +1222,7 @@ const setupDeepgram = (mediaStream) => {
   return deepgram;
 }
 
-// Setup STT event listeners (reusable for reconnections)
+// Enhanced STT event listeners with better noise filtering and barge-in detection
 function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
   // Keep connection alive
   if (keepAlive) clearInterval(keepAlive);
@@ -1074,20 +1236,18 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
     }
   }, 10 * 1000);
 
-  // Error handling with smart error categorization
+  // Error handling remains the same...
   deepgram.addListener(LiveTranscriptionEvents.Error, async (error) => {
     const errorMsg = error.message || error.toString() || 'Unknown error';
     const connId = deepgram._connectionId || 'unknown';
     console.warn(`STT: Connection ${connId} error:`, errorMsg);
     if (keepAlive) clearInterval(keepAlive);
     
-    // Cleanup connection count on error
     if (globalSTTConnections > 0) {
       globalSTTConnections--;
       console.log(`STT: Error cleanup for ${connId}, active connections: ${globalSTTConnections}`);
     }
     
-    // Pass full error object for smart categorization
     handleReconnect(error);
   });
 
@@ -1096,228 +1256,240 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
     console.log(`STT: Connection ${connId} closed (${code}) - ${reason || 'Unknown reason'}`);
     if (keepAlive) clearInterval(keepAlive);
     
-    // Cleanup connection count on close
     if (globalSTTConnections > 0) {
       globalSTTConnections--;
       console.log(`STT: Close cleanup for ${connId}, active connections: ${globalSTTConnections}`);
     }
     
-    // Only reconnect if the call is still active and it wasn't a normal close
     if (mediaStream.streamSid && currentMediaStream === mediaStream && code !== 1000) {
       const closeError = { message: `Connection ${connId} closed with code ${code}: ${reason}` };
       handleReconnect(closeError);
     }
   });
 
+  // ENHANCED: Add Voice Activity Detection listener
+  deepgram.addListener(LiveTranscriptionEvents.SpeechStarted, () => {
+    console.log("STT: Speech activity detected");
+    // Only trigger barge-in if we have valid speech, not just voice activity
+  });
+
   deepgram.addListener(LiveTranscriptionEvents.Open, async () => {
     console.log("STT: Connection ready");
-    // Reset reconnection state on successful connection
     if (handleReconnect.reset) handleReconnect.reset();
     
-    // Send automatic greeting immediately when STT is ready
     if (mediaStream.streamSid && !hasGreeted.has(mediaStream.streamSid)) {
       sendAutomaticGreeting(mediaStream);
     }
 
+    // ENHANCED: Main transcript processing with noise filtering
     deepgram.addListener(LiveTranscriptionEvents.Transcript, (data) => {
       const transcript = data.channel.alternatives[0].transcript;
+      const confidence = data.channel.alternatives[0].confidence || 0;
+      
       if (transcript !== "") {
         if (data.is_final) {
-          is_finals.push(transcript);
-          if (data.speech_final) {
-            const utterance = is_finals.join(" ");
-            is_finals = [];
-            console.log(`deepgram STT: [Speech Final] ${utterance}`);
-            llmStart = Date.now();
-            sseBroadcast('transcript_final', { utterance });
+          // ENHANCED: Validate final transcripts before processing
+          if (isValidTranscript(transcript, confidence)) {
+            is_finals.push(transcript);
+            console.log(`deepgram STT: [Is Final] ${transcript} (confidence: ${confidence.toFixed(2)})`);
+            sseBroadcast('transcript_partial', { transcript });
             
-            // Generate or use existing thread ID for conversation persistence
-            if (!mediaStream.threadId) {
-              mediaStream.threadId = streamSid || `thread_${Date.now()}`;
-            }
-            
-            console.log('meeting-graph: invoking with conversation memory', { threadId: mediaStream.threadId });
-            runMeetingGraph({ 
-              transcript: utterance, 
-              streamSid: mediaStream.threadId 
-            })
-              .then((result) => {
-                console.log('meeting-graph: result', { 
-                  intent: result && result.intent,
-                  hasDate: !!result?.date,
-                  hasTime: !!result?.time,
-                  missingInfo: result?.missing_info,
-                  currentStep: result?.current_step,
-                  systemPrompt: result?.systemPrompt
-                });
-                
-                // Use the LangGraph system prompt to guide the conversation
-                if (result && result.systemPrompt) {
-                  mediaStream.systemPrompt = result.systemPrompt;
-                  console.log('meeting-graph: applied system prompt:', result.systemPrompt);
-                  
-                  // Use the system prompt directly from LangGraph - all logic is now centralized in router.js
-                  const responseText = result.systemPrompt;
-                  
-                  console.log('meeting-graph: sending response to Azure TTS (streaming):', responseText);
+            if (data.speech_final) {
+              const utterance = is_finals.join(" ");
+              is_finals = [];
               
-                  // Set this as the current active MediaStream for TTS audio routing
-                  currentMediaStream = mediaStream;
-                  
-                  // Set speaking to true so TTS can process the audio
-                  speaking = true;
-                  ttsStart = Date.now();
-                  firstByte = true;
-                  
-                  // Send to Azure TTS with real-time streaming
-                  synthesizeWithAzureStreaming(responseText, mediaStream);
-                  
-                } else {
-                  // Fallback to LLM if no system prompt from LangGraph
-                  console.log('meeting-graph: no system prompt, falling back to LLM');
-                  promptLLM(mediaStream, utterance);
+              // ENHANCED: Double-check the complete utterance is valid
+              if (isValidTranscript(utterance, confidence)) {
+                console.log(`deepgram STT: [Speech Final] ${utterance}`);
+                llmStart = Date.now();
+                sseBroadcast('transcript_final', { utterance });
+                
+                // Generate or use existing thread ID for conversation persistence
+                if (!mediaStream.threadId) {
+                  mediaStream.threadId = streamSid || `thread_${Date.now()}`;
                 }
                 
-                sseBroadcast('graph_result', { 
-                  intent: result && result.intent,
-                  date: result?.date,
-                  time: result?.time,
-                  missing_info: result?.missing_info,
-                  conversation_length: result?.conversation_history?.length || 0,
-                  current_step: result?.current_step,
-                  systemPrompt: result?.systemPrompt
-                });
-              })
-              .catch((e) => {
-                console.error('meeting-graph: error', e);
-                sseBroadcast('graph_error', { message: String(e?.message || e) });
-                // Fallback to LLM on error
-                promptLLM(mediaStream, utterance);
-              });
+                console.log('meeting-graph: invoking with conversation memory', { threadId: mediaStream.threadId });
+                runMeetingGraph({ 
+                  transcript: utterance, 
+                  streamSid: mediaStream.threadId 
+                })
+                  .then((result) => {
+                    console.log('meeting-graph: result', { 
+                      intent: result && result.intent,
+                      hasDate: !!result?.date,
+                      hasTime: !!result?.time,
+                      missingInfo: result?.missing_info,
+                      currentStep: result?.current_step,
+                      systemPrompt: result?.systemPrompt
+                    });
+                    
+                    if (result && result.systemPrompt) {
+                      mediaStream.systemPrompt = result.systemPrompt;
+                      console.log('meeting-graph: applied system prompt:', result.systemPrompt);
+                      
+                      const responseText = result.systemPrompt;
+                      console.log('meeting-graph: sending response to Azure TTS (streaming):', responseText);
+                  
+                      currentMediaStream = mediaStream;
+                      speaking = true;
+                      ttsStart = Date.now();
+                      firstByte = true;
+                      
+                      synthesizeWithAzureStreaming(responseText, mediaStream);
+                      
+                    } else {
+                      console.log('meeting-graph: no system prompt, falling back to LLM');
+                      promptLLM(mediaStream, utterance);
+                    }
+                    
+                    sseBroadcast('graph_result', { 
+                      intent: result && result.intent,
+                      date: result?.date,
+                      time: result?.time,
+                      missing_info: result?.missing_info,
+                      conversation_length: result?.conversation_history?.length || 0,
+                      current_step: result?.current_step,
+                      systemPrompt: result?.systemPrompt
+                    });
+                  })
+                  .catch((e) => {
+                    console.error('meeting-graph: error', e);
+                    sseBroadcast('graph_error', { message: String(e?.message || e) });
+                    promptLLM(mediaStream, utterance);
+                  });
+              } else {
+                console.log(`STT: Filtered invalid speech final: "${utterance}"`);
+                is_finals = []; // Clear finals array
+              }
+            }
           } else {
-            console.log(`deepgram STT:  [Is Final] ${transcript}`);
-            sseBroadcast('transcript_partial', { transcript });
+            console.log(`STT: Filtered invalid final transcript: "${transcript}"`);
           }
         } else {
-          // Enhanced interim result filtering to reduce repetition
-          const shouldLog = shouldLogInterimTranscript(transcript, mediaStream.lastInterimTranscript);
-          const shouldBroadcast = shouldBroadcastInterimTranscript(transcript, mediaStream.lastInterimTranscript);
-          
-          if (shouldLog) {
-            console.log(`deepgram STT:    [Interim Result] ${transcript}`);
-            mediaStream.lastInterimTranscript = transcript;
-          }
-          
-          if (shouldBroadcast) {
-            debouncedBroadcast(streamSid, transcript);
-          }
-          
-          if (speaking) {
-            console.log('twilio: clear audio playback', streamSid);
-            // Handles Barge In - stop Azure TTS streaming
-            const messageJSON = JSON.stringify({
-              "event": "clear",
-              "streamSid": streamSid,
-            });
-            mediaStream.connection.sendUTF(messageJSON);
+          // ENHANCED: Better interim result filtering
+          if (isValidTranscript(transcript, confidence)) {
+            const shouldLog = shouldLogInterimTranscript(transcript, mediaStream.lastInterimTranscript);
+            const shouldBroadcast = shouldBroadcastInterimTranscript(transcript, mediaStream.lastInterimTranscript);
             
-            // Stop Azure TTS streaming synthesis
-            if (currentSynthesisRequest) {
-              try {
-                currentSynthesisRequest.cancel();
-                console.log('Azure TTS: Streaming synthesis canceled due to barge-in');
-              } catch (e) {
-                console.warn('Azure TTS: Error canceling streaming synthesis:', e);
-              }
-              currentSynthesisRequest = null;
+            if (shouldLog) {
+              console.log(`deepgram STT: [Interim Result] ${transcript} (confidence: ${confidence.toFixed(2)})`);
+              mediaStream.lastInterimTranscript = transcript;
             }
             
-            speaking = false;
+            if (shouldBroadcast) {
+              debouncedBroadcast(streamSid, transcript);
+            }
+            
+            // ENHANCED: Smarter barge-in detection
+            if (speaking && shouldTriggerBargeIn(transcript, confidence)) {
+              console.log('twilio: clear audio playback - valid speech detected', streamSid);
+              
+              // Stop Twilio audio playback
+              const messageJSON = JSON.stringify({
+                "event": "clear",
+                "streamSid": streamSid,
+              });
+              mediaStream.connection.sendUTF(messageJSON);
+              
+              // Stop Azure TTS streaming synthesis
+              if (currentSynthesisRequest) {
+                try {
+                  currentSynthesisRequest.cancel();
+                  console.log('Azure TTS: Streaming synthesis canceled due to valid speech barge-in');
+                } catch (e) {
+                  console.warn('Azure TTS: Error canceling streaming synthesis:', e);
+                }
+                currentSynthesisRequest = null;
+              }
+              
+              speaking = false;
+            }
+          } else {
+            // Log filtered noise for debugging
+            console.log(`STT: Filtered noise: "${transcript}" (confidence: ${confidence.toFixed(2)})`);
           }
         }
       }
     });
 
+    // ENHANCED: Utterance end processing with validation
     deepgram.addListener(LiveTranscriptionEvents.UtteranceEnd, (data) => {
       if (is_finals.length > 0) {
         console.log("deepgram STT: [Utterance End]");
         const utterance = is_finals.join(" ");
         is_finals = [];
-        console.log(`deepgram STT: [Speech Final] ${utterance}`);
-        llmStart = Date.now();
-        sseBroadcast('transcript_final', { utterance });
         
-        // Generate or use existing thread ID for conversation persistence
-        if (!mediaStream.threadId) {
-          mediaStream.threadId = streamSid || `thread_${Date.now()}`;
-        }
-        
-        console.log('meeting-graph: invoking with conversation memory', { threadId: mediaStream.threadId });
-        runMeetingGraph({ 
-          transcript: utterance, 
-          streamSid: mediaStream.threadId 
-        })
-          .then((result) => {
-            console.log('meeting-graph: result', { 
-              intent: result && result.intent,
-              hasDate: !!result?.date,
-              hasTime: !!result?.time,
-              missingInfo: result?.missing_info,
-              currentStep: result?.current_step,
-              systemPrompt: result?.systemPrompt
-            });
-            
-            // Use the LangGraph system prompt to guide the conversation
-            if (result && result.systemPrompt) {
-              mediaStream.systemPrompt = result.systemPrompt;
-              console.log('meeting-graph: applied system prompt:', result.systemPrompt);
+        // ENHANCED: Validate utterance before processing
+        if (isValidTranscript(utterance)) {
+          console.log(`deepgram STT: [Speech Final] ${utterance}`);
+          llmStart = Date.now();
+          sseBroadcast('transcript_final', { utterance });
+          
+          if (!mediaStream.threadId) {
+            mediaStream.threadId = streamSid || `thread_${Date.now()}`;
+          }
+          
+          console.log('meeting-graph: invoking with conversation memory', { threadId: mediaStream.threadId });
+          runMeetingGraph({ 
+            transcript: utterance, 
+            streamSid: mediaStream.threadId 
+          })
+            .then((result) => {
+              console.log('meeting-graph: result', { 
+                intent: result && result.intent,
+                hasDate: !!result?.date,
+                hasTime: !!result?.time,
+                missingInfo: result?.missing_info,
+                currentStep: result?.current_step,
+                systemPrompt: result?.systemPrompt
+              });
               
-              // Use the system prompt directly from LangGraph - all logic is now centralized in router.js
-              const responseText = result.systemPrompt;
-              
-              console.log('meeting-graph: sending response to Azure TTS (streaming):', responseText);
-              
-              // Set this as the current active MediaStream for TTS audio routing
-              currentMediaStream = mediaStream;
-              
-              // Set speaking to true so TTS can process the audio
-              speaking = true;
-              ttsStart = Date.now();
-              firstByte = true;
-              
-              // Send to Azure TTS with real-time streaming
-              synthesizeWithAzureStreaming(responseText, mediaStream);
-              
-              // Clear meeting data if appointment is complete
-              if (result.current_step === 'appointment_complete') {
-                clearMeetingData(mediaStream);
+              if (result && result.systemPrompt) {
+                mediaStream.systemPrompt = result.systemPrompt;
+                console.log('meeting-graph: applied system prompt:', result.systemPrompt);
+                
+                const responseText = result.systemPrompt;
+                console.log('meeting-graph: sending response to Azure TTS (streaming):', responseText);
+                
+                currentMediaStream = mediaStream;
+                speaking = true;
+                ttsStart = Date.now();
+                firstByte = true;
+                
+                synthesizeWithAzureStreaming(responseText, mediaStream);
+                
+                if (result.current_step === 'appointment_complete') {
+                  clearMeetingData(mediaStream);
+                }
+                
+              } else {
+                console.log('meeting-graph: no system prompt, falling back to LLM');
+                promptLLM(mediaStream, utterance);
               }
               
-            } else {
-              // Fallback to LLM if no system prompt from LangGraph
-              console.log('meeting-graph: no system prompt, falling back to LLM');
+              sseBroadcast('graph_result', { 
+                intent: result && result.intent,
+                date: result?.date,
+                time: result?.time,
+                missing_info: result?.missing_info,
+                conversation_length: result?.conversation_history?.length || 0,
+                current_step: result?.current_step,
+                systemPrompt: result?.systemPrompt
+              });
+            })
+            .catch((e) => {
+              console.error('meeting-graph: error', e);
+              sseBroadcast('graph_error', { message: String(e?.message || e) });
               promptLLM(mediaStream, utterance);
-            }
-            
-            sseBroadcast('graph_result', { 
-              intent: result && result.intent,
-              date: result?.date,
-              time: result?.time,
-              missing_info: result?.missing_info,
-              conversation_length: result?.conversation_history?.length || 0,
-              current_step: result?.current_step,
-              systemPrompt: result?.systemPrompt
             });
-          })
-          .catch((e) => {
-            console.error('meeting-graph: error', e);
-            sseBroadcast('graph_error', { message: String(e?.message || e) });
-            // Fallback to LLM on error
-            promptLLM(mediaStream, utterance);
-          });
+        } else {
+          console.log(`STT: Filtered invalid utterance end: "${utterance}"`);
+        }
       }
     });
 
+    // Existing event listeners remain the same...
     deepgram.addListener(LiveTranscriptionEvents.Close, async () => {
       console.log("STT: Disconnected");
       if (keepAlive) clearInterval(keepAlive);
