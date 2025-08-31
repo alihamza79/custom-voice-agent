@@ -36,7 +36,8 @@ setInterval(() => {
 // Deepgram Speech to Text (keeping STT as Deepgram)
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 const deepgramClient = createClient(process.env.DEEPGRAM_API_KEY);
-let keepAlive;
+// Use Map to track keepAlive intervals per connection
+const keepAliveIntervals = new Map();
 
 // ENHANCED: More conservative transcript filtering to reduce noise processing
 function shouldLogInterimTranscript(current, last) {
@@ -660,14 +661,26 @@ function resetGlobalState() {
     currentSynthesisRequest = null;
   }
   
-  if (azureSynthesizer) {
+  // Clean up all keepAlive intervals
+  for (const [connectionId, interval] of keepAliveIntervals.entries()) {
     try {
-      azureSynthesizer.close();
+      clearInterval(interval);
+      console.log(`🧹 Cleaned keepAlive interval for connection: ${connectionId}`);
     } catch (e) {
-      console.warn('Azure TTS: Error closing synthesizer:', e);
+      console.warn(`Error cleaning keepAlive interval for ${connectionId}:`, e);
     }
-    azureSynthesizer = null;
   }
+  keepAliveIntervals.clear();
+  
+  // Clean up all debounce timers
+  for (const [key, timer] of transcriptDebounceTimers.entries()) {
+    try {
+      clearTimeout(timer);
+    } catch (e) {
+      console.warn(`Error cleaning debounce timer for ${key}:`, e);
+    }
+  }
+  transcriptDebounceTimers.clear();
   
   // Clean up intervals
   if (ttsKeepAliveInterval) {
@@ -681,7 +694,10 @@ function resetGlobalState() {
   lastConnectionError = 0;
   reconnectAttempts = 0;
   
-  console.log('🔄 Complete global state reset');
+  // Clear transcript cache
+  transcriptCache.clear();
+  
+  console.log('🔄 Complete global state reset with all resources cleaned');
 }
 
 // Enhanced STT connection with better noise filtering and speech detection
@@ -1073,7 +1089,21 @@ class MediaStream {
     
     // Clean up STT connection properly
     if (this.deepgram) {
+      const connectionId = this.deepgram._connectionId;
+      
       try {
+        // Clean up connection-specific keepAlive interval
+        if (connectionId && keepAliveIntervals.has(connectionId)) {
+          clearInterval(keepAliveIntervals.get(connectionId));
+          keepAliveIntervals.delete(connectionId);
+          console.log(`🧹 Cleaned keepAlive for connection: ${connectionId}`);
+        }
+        
+        // Clean up debounce timers for this connection
+        if (this.deepgram._cleanupDebounce) {
+          this.deepgram._cleanupDebounce();
+        }
+        
         this.deepgram.requestClose();
       } catch (e) {
         console.warn('STT: Error closing connection:', e.message);
@@ -1083,6 +1113,17 @@ class MediaStream {
     
     // Clear currentMediaStream if it points to this connection
     if (currentMediaStream === this) {
+      // Cancel any ongoing Azure TTS synthesis
+      if (currentSynthesisRequest) {
+        try {
+          currentSynthesisRequest.cancel();
+          console.log('Azure TTS: Canceled synthesis on connection close');
+        } catch (e) {
+          console.warn('Azure TTS: Error canceling synthesis:', e);
+        }
+        currentSynthesisRequest = null;
+      }
+      
       currentMediaStream = null;
       speaking = false;
       firstByte = true;
@@ -1224,24 +1265,41 @@ const setupDeepgram = (mediaStream) => {
 
 // Enhanced STT event listeners with better noise filtering and barge-in detection
 function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
-  // Keep connection alive
-  if (keepAlive) clearInterval(keepAlive);
-  keepAlive = setInterval(() => {
+  const connectionId = deepgram._connectionId;
+  
+  // Keep connection alive - use per-connection intervals
+  if (keepAliveIntervals.has(connectionId)) {
+    clearInterval(keepAliveIntervals.get(connectionId));
+  }
+  
+  const keepAliveInterval = setInterval(() => {
     try {
       if (deepgram && deepgram.keepAlive) {
         deepgram.keepAlive();
       }
     } catch (e) {
-      console.warn('STT: keepAlive failed:', e.message);
+      console.warn(`STT: keepAlive failed for ${connectionId}:`, e.message);
+      // Clean up failed interval
+      if (keepAliveIntervals.has(connectionId)) {
+        clearInterval(keepAliveIntervals.get(connectionId));
+        keepAliveIntervals.delete(connectionId);
+      }
     }
   }, 10 * 1000);
+  
+  keepAliveIntervals.set(connectionId, keepAliveInterval);
 
-  // Error handling remains the same...
+  // Enhanced error handling with proper cleanup
   deepgram.addListener(LiveTranscriptionEvents.Error, async (error) => {
     const errorMsg = error.message || error.toString() || 'Unknown error';
     const connId = deepgram._connectionId || 'unknown';
     console.warn(`STT: Connection ${connId} error:`, errorMsg);
-    if (keepAlive) clearInterval(keepAlive);
+    
+    // Clean up connection-specific keepAlive
+    if (keepAliveIntervals.has(connId)) {
+      clearInterval(keepAliveIntervals.get(connId));
+      keepAliveIntervals.delete(connId);
+    }
     
     if (globalSTTConnections > 0) {
       globalSTTConnections--;
@@ -1254,7 +1312,12 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
   deepgram.addListener(LiveTranscriptionEvents.Close, async (code, reason) => {
     const connId = deepgram._connectionId || 'unknown';
     console.log(`STT: Connection ${connId} closed (${code}) - ${reason || 'Unknown reason'}`);
-    if (keepAlive) clearInterval(keepAlive);
+    
+    // Clean up connection-specific keepAlive
+    if (keepAliveIntervals.has(connId)) {
+      clearInterval(keepAliveIntervals.get(connId));
+      keepAliveIntervals.delete(connId);
+    }
     
     if (globalSTTConnections > 0) {
       globalSTTConnections--;
@@ -1489,10 +1552,21 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
       }
     });
 
-    // Existing event listeners remain the same...
+    // Enhanced close listener with proper cleanup
     deepgram.addListener(LiveTranscriptionEvents.Close, async () => {
-      console.log("STT: Disconnected");
-      if (keepAlive) clearInterval(keepAlive);
+      console.log(`STT: Disconnected - ${connectionId}`);
+      
+      // Clean up connection-specific resources
+      if (keepAliveIntervals.has(connectionId)) {
+        clearInterval(keepAliveIntervals.get(connectionId));
+        keepAliveIntervals.delete(connectionId);
+      }
+      
+      // Clean up debounce timers
+      if (deepgram._cleanupDebounce) {
+        deepgram._cleanupDebounce();
+      }
+      
       try {
         deepgram.requestClose();
       } catch (_) {}

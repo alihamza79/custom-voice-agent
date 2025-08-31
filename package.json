@@ -2,11 +2,12 @@
   "name": "deepgram-streaming-voice-agent",
   "version": "0.0.1",
   "description": "Streaming Voice Agent Sample",
-  "main": "server-azure.js",
+  "main": "src/server.js",
   "scripts": {
-    "start": "nodemon server-azure.js",
+    "start": "nodemon src/server.js",
     "frontend": "cd frontend && npm run dev",
-    "backend": "nodemon server-azure.js"
+    "backend": "nodemon src/server.js",
+    "legacy": "nodemon server-azure.js"
   },
   "repository": {
     "type": "git",
@@ -16,15 +17,21 @@
   "license": "MIT",
   "dependencies": {
     "@deepgram/sdk": "^3.4.4",
+    "@langchain/community": "^0.2.8",
     "@langchain/core": "^0.2.27",
     "@langchain/langgraph": "^0.0.34",
+    "@langchain/openai": "^0.2.8",
     "dotenv": "^16.4.5",
+    "googleapis": "^159.0.0",
     "httpdispatcher": "^2.1.2",
+    "langchain": "^0.2.8",
     "microsoft-cognitiveservices-speech-sdk": "^1.45.0",
+    "mongodb": "^6.19.0",
     "node-fetch": "^2.7.0",
     "openai": "^4.52.7",
     "twilio": "^5.4.3",
-    "websocket": "^1.0.28"
+    "websocket": "^1.0.28",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"

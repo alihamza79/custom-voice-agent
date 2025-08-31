@@ -1,0 +1,42 @@
+{
+  "+4981424634018": {
+    "name": "Husnain Chotooo",
+    "type": "customer"
+  },
+  "+1987654321": {
+    "name": "Sarah Johnson", 
+    "type": "boss"
+  },
+  "+923451470397": {
+    "name": "Mike Wilson",
+    "type": "teammate"
+  },
+  "+1444555666": {
+    "name": "Emily Davis",
+    "type": "customer"
+  },
+  "+1777888999": {
+    "name": "David Brown",
+    "type": "customer"
+  },
+  "+1222333444": {
+    "name": "Lisa Anderson",
+    "type": "boss"
+  },
+  "+1666777888": {
+    "name": "Robert Taylor",
+    "type": "customer"
+  },
+  "+1333444555": {
+    "name": "Jennifer Martinez",
+    "type": "customer"
+  },
+  "+1888999000": {
+    "name": "Christopher Lee",
+    "type": "customer"
+  },
+  "+923451470398": {
+    "name": "Amanda White",
+    "type": "office"
+  }
+}
