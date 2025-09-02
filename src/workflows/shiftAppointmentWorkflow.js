@@ -11,6 +11,8 @@ const { z } = require("zod");
 const { google } = require('googleapis');
 const { MongoClient } = require('mongodb');
 const twilio = require('twilio');
+const calendarService = require('../services/googleCalendarService');
+const calendarTools = require('../services/googleCalendarTools');
 
 class LangChainAppointmentWorkflow {
   constructor() {
@@ -128,163 +130,13 @@ IMPORTANT: Always be helpful and proactive. Don't wait for perfect input - work 
     return agentExecutor;
   }
 
-  // Create improved tools for the agent
+  // Create improved tools for the agent using real Google Calendar
   async createTools(sessionId, callerInfo) {
-    const tools = [];
+    // Set global caller info for tools to access
+    global.currentCallerInfo = callerInfo;
 
-    // 1. Primary Calendar Check Tool
-    tools.push(
-      new DynamicStructuredTool({
-        name: "check_calendar",
-        description: "ALWAYS use this FIRST when user wants to shift/cancel appointments. Shows all upcoming appointments.",
-        schema: z.object({
-          action: z.string().optional().describe("The action user wants (shift/cancel)"),
-        }),
-        func: async ({ action }) => {
-          console.log('🔧 Tool: Checking calendar for appointments...');
-          
-          const session = this.sessions.get(sessionId);
-          
-          // Fetch appointments (use mock data for testing)
-          const appointments = await this.fetchAppointments(callerInfo);
-          
-          // Store in session
-          if (session) {
-            session.appointments = appointments;
-            session.lastCalendarCheck = Date.now();
-            session.workflowStep = 2; // Move to selection step
-          }
-          
-          if (appointments.length === 0) {
-            return "You don't have any upcoming appointments scheduled.";
-          }
-          
-          const appointmentsList = appointments.map((apt, i) => {
-            const date = new Date(apt.start.dateTime);
-            return `${i + 1}. ${apt.summary} - ${date.toLocaleDateString()} at ${date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
-          }).join('\n');
-          
-          const actionText = action === 'cancel' ? 'cancel' : 'shift';
-          return `I found ${appointments.length} upcoming appointment(s):\n\n${appointmentsList}\n\nWhich appointment would you like to ${actionText}?`;
-        },
-      })
-    );
-
-    // 2. Smart Appointment Processor
-    tools.push(
-      new DynamicStructuredTool({
-        name: "process_appointment",
-        description: "Process user's appointment selection (by name or number) for shifting or canceling",
-        schema: z.object({
-          selection: z.string().describe("User's selection (e.g., 'dental', 'first', '1', 'business')"),
-          action: z.enum(["shift", "cancel"]).describe("Action to take"),
-          newDateTime: z.string().optional().describe("New date/time if shifting"),
-        }),
-        func: async ({ selection, action, newDateTime }) => {
-          console.log(`🔧 Processing appointment: selection="${selection}", action="${action}"`);
-          
-          const session = this.sessions.get(sessionId);
-          if (!session || !session.appointments || session.appointments.length === 0) {
-            return "Let me check your appointments first.";
-          }
-          
-          // Find the appointment
-          let selectedAppointment = null;
-          let appointmentIndex = -1;
-          
-          const searchTerm = selection.toLowerCase().trim();
-          
-          // Try to match by index first
-          if (searchTerm.match(/^[1-9]$/)) {
-            appointmentIndex = parseInt(searchTerm) - 1;
-          } else if (searchTerm.includes('first') || searchTerm.includes('1st')) {
-            appointmentIndex = 0;
-          } else if (searchTerm.includes('second') || searchTerm.includes('2nd')) {
-            appointmentIndex = 1;
-          } else if (searchTerm.includes('third') || searchTerm.includes('3rd')) {
-            appointmentIndex = 2;
-          }
-          
-          // If index found, use it
-          if (appointmentIndex >= 0 && appointmentIndex < session.appointments.length) {
-            selectedAppointment = session.appointments[appointmentIndex];
-          } else {
-            // Try to match by name
-            for (let i = 0; i < session.appointments.length; i++) {
-              const aptName = session.appointments[i].summary.toLowerCase();
-              if (aptName.includes(searchTerm) || searchTerm.includes(aptName.split(' ')[0])) {
-                selectedAppointment = session.appointments[i];
-                appointmentIndex = i;
-                break;
-              }
-            }
-          }
-          
-          if (!selectedAppointment) {
-            return `I couldn't find an appointment matching "${selection}". Please specify which appointment from the list.`;
-          }
-          
-          // Process the action
-          const appointmentDate = new Date(selectedAppointment.start.dateTime);
-          const appointmentName = selectedAppointment.summary;
-          
-          // Update session state
-          session.workflowStep = 3;
-          session.lastAction = action;
-          
-          // Check if same-day shift
-          const today = new Date();
-          const isSameDay = appointmentDate.toDateString() === today.toDateString();
-          
-          let message;
-          
-          if (action === "cancel") {
-            // Send cancellation notification
-            await this.sendWhatsApp('+923451470398',
-              `🔔 CANCELLATION REQUEST\n👤 ${callerInfo.name}\n📅 ${appointmentName} on ${appointmentDate.toLocaleDateString()}`,
-              'office'
-            );
-            message = `Perfect! I've cancelled your ${appointmentName} appointment scheduled for ${appointmentDate.toLocaleDateString()}. You'll receive a confirmation shortly.`;
-          } else {
-            // Handle shifting
-            if (isSameDay) {
-              await this.sendWhatsApp('+923451470397',
-                `🔔 SAME-DAY SHIFT\n👤 ${callerInfo.name}\n📅 ${appointmentName}\n🕐 New time: ${newDateTime || 'ASAP'}`,
-                'teammate'
-              );
-              message = `I've requested to shift your ${appointmentName} appointment today. Mike Wilson will contact you shortly to confirm the new time.`;
-            } else {
-              await this.sendWhatsApp('+923451470398',
-                `🔔 RESCHEDULE REQUEST\n👤 ${callerInfo.name}\n📅 ${appointmentName}\n📆 New date: ${newDateTime || 'Next available'}`,
-                'office'
-              );
-              message = `I've requested to reschedule your ${appointmentName} appointment${newDateTime ? ` to ${newDateTime}` : ''}. Our office will contact you to confirm.`;
-            }
-          }
-          
-          return message + "\n\nIs there anything else I can help you with?";
-        },
-      })
-    );
-
-    // 3. End Call Tool
-    tools.push(
-      new DynamicTool({
-        name: "end_call",
-        description: "End the call when user says goodbye or has no more requests",
-        func: async () => {
-          console.log('🔧 Ending call...');
-          const session = this.sessions.get(sessionId);
-          if (session) {
-            session.currentState = 'ended';
-            session.workflowStep = 4;
-          }
-          return "Thank you for calling! Have a great day. Goodbye!";
-        },
-      })
-    );
-
-    return tools;
+    // Use the real Google Calendar tools
+    return calendarTools.getTools();
   }
 
   // Process user input with better error handling
@@ -354,45 +206,13 @@ IMPORTANT: Always be helpful and proactive. Don't wait for perfect input - work 
     }
   }
 
-  // Fetch appointments helper
-  async fetchAppointments(callerInfo, searchTerm) {
-    // Return mock appointments for testing
-    const appointments = [
-      {
-        id: 'apt_1',
-        summary: 'Dental Checkup',
-        start: { dateTime: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString() },
-        end: { dateTime: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000 + 3600000).toISOString() },
-      },
-      {
-        id: 'apt_2',
-        summary: 'Business Meeting',
-        start: { dateTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() },
-        end: { dateTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000 + 3600000).toISOString() },
-      },
-    ];
-    
-    return appointments;
-  }
-
-  // Send WhatsApp helper
-  async sendWhatsApp(number, message, recipientType) {
-    try {
-      console.log(`📱 [MOCK] WhatsApp to ${recipientType} (${number}):\n${message}`);
-      return { success: true, mock: true };
-    } catch (error) {
-      console.error('WhatsApp error:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  // Get caller info helper
+  // Get caller info helper (now uses real data from caller identification)
   getCallerInfo(streamSid) {
-    return {
-      name: 'Husnain Chotooo',
-      phoneNumber: '+4981424634018',
+    return global.currentCallerInfo || {
+      name: 'Customer',
+      phoneNumber: '+1234567890',
       type: 'customer',
-      email: 'husnain@example.com',
+      email: 'customer@example.com',
     };
   }
 

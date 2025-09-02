@@ -3,6 +3,7 @@ const { RunnableLambda } = require("@langchain/core/runnables");
 const OpenAI = require('openai');
 const appointmentHandler = require('../../workflows/AppointmentWorkflowHandler');
 const { globalTimingLogger } = require('../../utils/timingLogger');
+const calendarService = require('../../services/googleCalendarService');
 
 const openai = new OpenAI();
 
@@ -223,7 +224,27 @@ Classify this into one of the 5 categories.`;
         type: state.callerInfo?.type || 'customer',
         email: state.callerInfo?.email || `${state.phoneNumber}@example.com`
       };
-      
+
+      // Set global caller info for calendar tools to access
+      global.currentCallerInfo = callerInfo;
+
+      // 🚀 PERFORMANCE OPTIMIZATION: Preload calendar data immediately
+      // Start fetching calendar data in background while processing workflow
+      if (!global.calendarPreloadPromise) {
+        console.log('🚀 Preloading calendar data for faster response...');
+        global.calendarPreloadPromise = calendarService.getAppointments(callerInfo)
+          .then(appointments => {
+            console.log(`📅 Preloaded ${appointments.length} appointments`);
+            global.preloadedAppointments = appointments;
+            return appointments;
+          })
+          .catch(error => {
+            console.warn('⚠️ Calendar preload failed:', error.message);
+            global.preloadedAppointments = [];
+            return [];
+          });
+      }
+
       // INTELLIGENT GENERIC FILLER: Send appropriate filler based on intent
       let immediateResponse;
       if (classifiedIntent === 'shift_cancel_appointment') {
