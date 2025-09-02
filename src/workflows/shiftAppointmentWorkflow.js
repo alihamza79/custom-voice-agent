@@ -103,7 +103,7 @@ IMPORTANT: Always be helpful and proactive. Don't wait for perfect input - work 
       agent,
       tools,
       memory,
-      verbose: true, // Enable for debugging
+      verbose: false, // Enable for debugging
       maxIterations: 3, // Limit iterations to prevent loops
       handleParsingErrors: true,
       returnIntermediateSteps: true,
@@ -300,7 +300,9 @@ IMPORTANT: Always be helpful and proactive. Don't wait for perfect input - work 
         console.log(`⚠️ Initializing new session: ${sessionId}`);
         const callerInfo = this.getCallerInfo(streamSid);
         
+        // ASYNC FILLER SYSTEM: Only send additional fillers if callback provided and not shift_cancel_appointment
         if (sendFillerCallback) {
+          console.log('🗣️ Sending session initialization filler...');
           sendFillerCallback("Let me help you with your appointment...");
         }
         
@@ -311,8 +313,9 @@ IMPORTANT: Always be helpful and proactive. Don't wait for perfect input - work 
       // Update conversation state
       session.conversationTurns++;
       
-      // Send filler if callback provided
+      // ASYNC FILLER SYSTEM: Only send workflow step fillers if callback provided
       if (sendFillerCallback && session.workflowStep === 1) {
+        console.log('🗣️ Sending workflow step filler...');
         sendFillerCallback("Let me check your appointments...");
       }
       

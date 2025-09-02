@@ -183,7 +183,7 @@ async function fetchVoiceToken(baseUrl) {
 function App() {
   const baseUrl = useMemo(() => {
     const env = import.meta.env;
-    const url = env.VITE_BACKEND_URL || `${window.location.protocol}//${window.location.hostname}:8080`;
+    const url = env.VITE_BACKEND_URL || "http://localhost:8080";
     // const url = "https://custom-voice-agent.onrender.com"
     return url;
   }, []);

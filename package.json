@@ -21,6 +21,7 @@
     "@langchain/core": "^0.2.27",
     "@langchain/langgraph": "^0.0.34",
     "@langchain/openai": "^0.2.8",
+    "chalk": "^4.1.2",
     "dotenv": "^16.4.5",
     "googleapis": "^159.0.0",
     "httpdispatcher": "^2.1.2",

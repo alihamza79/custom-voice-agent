@@ -82,13 +82,39 @@ async function generatePersonalizedGreeting(callerInfo, phoneNumber, language = 
     
     // Fallback greeting
     if (callerInfo) {
-      return `Hello ${callerInfo.name}! How can I help you today?`;
+      return `Hi ${callerInfo.name}! How can I help you today?`;
     } else {
       return "Hello! Thank you for calling. How can I assist you today?";
     }
   }
 }
 
+// Get immediate greeting without API call for instant response
+function getImmediateGreeting(callerInfo, language = 'english') {
+  const greetings = {
+    english: {
+      known: callerInfo ? `Hi ${callerInfo.name}! How can I help you today?` : "Hi..! Thank you for calling. How can I assist you today?",
+      unknown: "Hello! Welcome, and thank you for calling. How can I assist you today?"
+    },
+    german: {
+      known: callerInfo ? `Hallo ${callerInfo.name}! Wie kann ich Ihnen heute helfen?` : "Hallo! Vielen Dank für Ihren Anruf. Wie kann ich Ihnen helfen?",
+      unknown: "Hallo! Willkommen und vielen Dank für Ihren Anruf. Wie kann ich Ihnen helfen?"
+    },
+    hindi: {
+      known: callerInfo ? `नमस्ते ${callerInfo.name}! मैं आपकी कैसे मदद कर सकता हूं?` : "नमस्ते! कॉल करने के लिए धन्यवाद। मैं आपकी कैसे मदद कर सकता हूं?",
+      unknown: "नमस्ते! स्वागत है और कॉल करने के लिए धन्यवाद। मैं आपकी कैसे मदद कर सकता हूं?"
+    },
+    hindi_mixed: {
+      known: callerInfo ? `Hello ${callerInfo.name}! Main aapki kaise help kar sakta hun?` : "Hello! Call karne ke liye thank you. Main aapki kaise help kar sakta hun?",
+      unknown: "Hello! Welcome aur call karne ke liye thank you. Main aapki kaise help kar sakta hun?"
+    }
+  };
+  
+  const langGreetings = greetings[language] || greetings.english;
+  return callerInfo ? langGreetings.known : langGreetings.unknown;
+}
+
 module.exports = {
-  generatePersonalizedGreeting
+  generatePersonalizedGreeting,
+  getImmediateGreeting
 };

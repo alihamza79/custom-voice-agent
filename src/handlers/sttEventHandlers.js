@@ -10,22 +10,7 @@ const { debouncedBroadcast } = require('../utils/transcriptCache');
 const sseService = require('../services/sseService');
 const azureTTSService = require('../services/azureTTSService');
 const deepgramSTTService = require('../services/deepgramSTTService');
-
-// Map Deepgram language codes to our internal language codes
-function mapDeepgramLanguageToOurs(deepgramLang) {
-  const languageMap = {
-    'en': 'english',
-    'en-US': 'english',
-    'en-GB': 'english',
-    'de': 'german',
-    'de-DE': 'german',
-    'hi': 'hindi',
-    'hi-IN': 'hindi',
-    'hi-Latn': 'hindi_mixed' // Hindi with Latin script
-  };
-  
-  return languageMap[deepgramLang] || 'english';
-}
+const { globalTimingLogger } = require('../utils/timingLogger');
 
 // Enhanced STT event listeners with better noise filtering and barge-in detection
 function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
@@ -59,45 +44,38 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
     }
   });
 
-  // ENHANCED: Add Voice Activity Detection listener
+  // Add Voice Activity Detection listener
   deepgram.addListener(LiveTranscriptionEvents.SpeechStarted, () => {
-    console.log("STT: Speech activity detected");
-    // Only trigger barge-in if we have valid speech, not just voice activity
+    globalTimingLogger.logMoment('Speech activity detected');
   });
 
   deepgram.addListener(LiveTranscriptionEvents.Open, async () => {
-    console.log("STT: Connection ready");
+    globalTimingLogger.logMoment('STT connection ready');
     if (handleReconnect.reset) handleReconnect.reset();
     
-    // DISABLED: Auto-greeting commented out - user speaks first to set language
-    // if (mediaStream.streamSid && !mediaStream.hasGreeted) {
-    //   const { sendAutomaticGreeting } = require('../handlers/greetingHandler');
-    //   sendAutomaticGreeting(mediaStream);
-    // }
-    console.log('🎙️ STT ready - waiting for user to speak first to detect language');
+    // CRITICAL FIX: Auto-greeting is now handled in MediaStream constructor
+    globalTimingLogger.logMoment('STT ready - auto-greeting already sent');
 
-    // ENHANCED: Main transcript processing with noise filtering
+    // Main transcript processing with noise filtering
     deepgram.addListener(LiveTranscriptionEvents.Transcript, (data) => {
       const transcript = data.channel.alternatives[0].transcript;
       const confidence = data.channel.alternatives[0].confidence || 0;
       
-      // Language detection is now handled by global language service in utteranceHandler
-      
       if (transcript !== "") {
         if (data.is_final) {
-          // ENHANCED: Validate final transcripts before processing
+          // Validate final transcripts before processing
           if (isValidTranscript(transcript, confidence)) {
             is_finals.push(transcript);
-            console.log(`deepgram STT: [Is Final] ${transcript} (confidence: ${confidence.toFixed(2)})`);
+            globalTimingLogger.logMoment(`Final transcript: "${transcript}"`);
             sseService.broadcast('transcript_partial', { transcript });
             
             if (data.speech_final) {
               const utterance = is_finals.join(" ");
               is_finals.length = 0; // Clear array
               
-              // ENHANCED: Double-check the complete utterance is valid
+              // Double-check the complete utterance is valid
               if (isValidTranscript(utterance, confidence)) {
-                console.log(`deepgram STT: [Speech Final] ${utterance}`);
+                globalTimingLogger.logMoment(`Speech final: "${utterance}"`);
                 mediaStream.llmStart = Date.now();
                 sseService.broadcast('transcript_final', { utterance });
                 
@@ -105,20 +83,20 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
                 const { processUtterance } = require('../handlers/utteranceHandler');
                 processUtterance(utterance, mediaStream);
               } else {
-                console.log(`STT: Filtered invalid speech final: "${utterance}"`);
+                globalTimingLogger.logMoment(`Filtered invalid speech final: "${utterance}"`);
               }
             }
           } else {
-            console.log(`STT: Filtered invalid final transcript: "${transcript}"`);
+            globalTimingLogger.logMoment(`Filtered invalid final transcript: "${transcript}"`);
           }
         } else {
-          // ENHANCED: Better interim result filtering
+          // Better interim result filtering
           if (isValidTranscript(transcript, confidence)) {
             const shouldLog = shouldLogInterimTranscript(transcript, mediaStream.lastInterimTranscript);
             const shouldBroadcast = shouldBroadcastInterimTranscript(transcript, mediaStream.lastInterimTranscript);
             
             if (shouldLog) {
-              console.log(`deepgram STT: [Interim Result] ${transcript} (confidence: ${confidence.toFixed(2)})`);
+              globalTimingLogger.logMoment(`Interim transcript: "${transcript}"`);
               mediaStream.lastInterimTranscript = transcript;
             }
             
@@ -126,9 +104,9 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
               debouncedBroadcast(mediaStream.streamSid, transcript, sseService.broadcast.bind(sseService));
             }
             
-            // ENHANCED: Smarter barge-in detection
+            // Smarter barge-in detection
             if (mediaStream.speaking && shouldTriggerBargeIn(transcript, confidence)) {
-              console.log('twilio: clear audio playback - valid speech detected', mediaStream.streamSid);
+              globalTimingLogger.logMoment('Barge-in detected - clearing audio playback');
               
               // Stop Twilio audio playback
               const messageJSON = JSON.stringify({
@@ -144,22 +122,22 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
             }
           } else {
             // Log filtered noise for debugging
-            console.log(`STT: Filtered noise: "${transcript}" (confidence: ${confidence.toFixed(2)})`);
+            globalTimingLogger.logMoment(`Filtered noise: "${transcript}"`);
           }
         }
       }
     });
 
-    // ENHANCED: Utterance end processing with validation
+    // Utterance end processing with validation
     deepgram.addListener(LiveTranscriptionEvents.UtteranceEnd, (data) => {
       if (is_finals.length > 0) {
-        console.log("deepgram STT: [Utterance End]");
+        globalTimingLogger.logMoment('Utterance end detected');
         const utterance = is_finals.join(" ");
         is_finals.length = 0; // Clear array
         
-        // ENHANCED: Validate utterance before processing
+        // Validate utterance before processing
         if (isValidTranscript(utterance)) {
-          console.log(`deepgram STT: [Speech Final] ${utterance}`);
+          globalTimingLogger.logMoment(`Utterance end final: "${utterance}"`);
           mediaStream.llmStart = Date.now();
           sseService.broadcast('transcript_final', { utterance });
           
@@ -167,14 +145,14 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
           const { processUtterance } = require('../handlers/utteranceHandler');
           processUtterance(utterance, mediaStream);
         } else {
-          console.log(`STT: Filtered invalid utterance end: "${utterance}"`);
+          globalTimingLogger.logMoment(`Filtered invalid utterance end: "${utterance}"`);
         }
       }
     });
 
     // Enhanced close listener with proper cleanup
     deepgram.addListener(LiveTranscriptionEvents.Close, async () => {
-      console.log(`STT: Disconnected - ${connectionId}`);
+      globalTimingLogger.logMoment(`STT disconnected`);
       
       // Clean up connection-specific resources
       deepgramSTTService.cleanupConnection(connectionId);
@@ -190,13 +168,11 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
     });
 
     deepgram.addListener(LiveTranscriptionEvents.Warning, async (warning) => {
-      console.log("deepgram STT: warning received");
-      console.warn(warning);
+      globalTimingLogger.logMoment('STT warning received');
     });
 
     deepgram.addListener(LiveTranscriptionEvents.Metadata, (data) => {
-      console.log("deepgram STT: metadata received:", data);
-      // Language detection is now handled by global language service
+      // Metadata logs are usually not needed for timing analysis
     });
   });
 }

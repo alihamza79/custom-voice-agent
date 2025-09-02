@@ -4,6 +4,7 @@ const { AZURE_TTS_CONFIG } = require('../config/constants');
 const { SPEECH_KEY, SPEECH_REGION } = require('../config/environment');
 const sseService = require('./sseService');
 const { getAzureTTSConfig } = require('../utils/languageDetection');
+const { globalTimingLogger } = require('../utils/timingLogger');
 
 class AzureTTSService {
   constructor() {
@@ -17,10 +18,8 @@ class AzureTTSService {
 
   // Initialize Azure TTS with streaming optimization
   async initialize() {
-    console.log('Azure TTS: Setting up streaming synthesizer...');
-    
     if (!SPEECH_KEY || !SPEECH_REGION) {
-      console.error('🚨 Azure TTS: Missing SPEECH_KEY or SPEECH_REGION environment variables!');
+      globalTimingLogger.logError(new Error('Missing SPEECH_KEY or SPEECH_REGION'), 'Azure TTS Init');
       return false;
     }
     
@@ -46,17 +45,13 @@ class AzureTTSService {
       // Create synthesizer with null audio config for manual streaming handling
       this.synthesizer = new sdk.SpeechSynthesizer(speechConfig, null);
       
-      console.log('Azure TTS: Streaming synthesizer ready ✅');
-      console.log(`Azure TTS: Using voice: ${AZURE_TTS_CONFIG.voiceName} with real-time streaming`);
-      console.log(`Azure TTS: Output format: μ-law 8kHz for Twilio compatibility`);
-      
       this.reconnectAttempts = 0;
       this.isReady = true;
       
       return true;
       
     } catch (error) {
-      console.error('Azure TTS: Streaming setup error:', error);
+      globalTimingLogger.logError(error, 'Azure TTS Init');
       this.synthesizer = null;
       this.isReady = false;
       return false;
@@ -66,7 +61,6 @@ class AzureTTSService {
   // NEW: Real-time Azure TTS Streaming Function with minimal latency and multi-language support
   async synthesizeStreaming(text, mediaStream, language = 'english', retries = 3) {
     if (!this.synthesizer || !this.isReady) {
-      console.warn('Azure TTS: Synthesizer not ready');
       if (retries > 0) {
         setTimeout(() => {
           this.initialize();
@@ -78,10 +72,8 @@ class AzureTTSService {
     
     // Get language-specific voice configuration
     const ttsConfig = getAzureTTSConfig(language);
-    console.log(`🌐 Azure TTS: Using ${language} voice: ${ttsConfig.voice}`);
     
     if (!text || text.trim().length === 0) {
-      console.warn('Azure TTS: Empty text provided');
       return false;
     }
 
@@ -90,14 +82,12 @@ class AzureTTSService {
       try {
         this.currentSynthesisRequest.cancel();
       } catch (e) {
-        console.warn('Azure TTS: Error canceling previous synthesis:', e);
+        // Error canceling previous synthesis
       }
     }
 
     // Create optimized SSML for ultra-low latency with language-specific voice
     const ssml = this.createSSML(text, ttsConfig);
-
-    console.log('Azure TTS: Starting real-time streaming synthesis...');
 
     return new Promise((resolve, reject) => {
       let firstByte = true;
@@ -138,7 +128,7 @@ class AzureTTSService {
           };
           
           mediaStream.connection.sendUTF(JSON.stringify(message));
-          console.log(`Azure TTS: Streamed ${audioChunk.length} bytes in real-time`);
+          // console.log(`Azure TTS: Streamed ${audioChunk.length} bytes in real-time`);
         }
       };
 

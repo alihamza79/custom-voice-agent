@@ -64,10 +64,11 @@ class AppointmentWorkflowHandler {
     }
     
     try {
-      // Create filler callback for async processing - send to TTS immediately
+      // ASYNC FILLER SYSTEM: Only create filler callback if immediateCallback is provided
+      // For shift_cancel_appointment, the filler is already sent from customerIntentNode
       const fillerCallback = immediateCallback ? (message) => {
-        console.log(`🗣️  FILLER RESPONSE: ${message}`);
-        // Send filler response to TTS immediately - no delay needed
+        console.log(`🗣️  ADDITIONAL FILLER RESPONSE: ${message}`);
+        // Send additional filler response to TTS immediately - no delay needed
         immediateCallback(message);
       } : null;
       

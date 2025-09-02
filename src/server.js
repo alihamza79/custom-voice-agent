@@ -6,6 +6,7 @@ const path = require("path");
 // Configuration
 const { validateEnvironment } = require('./config/environment');
 const { HTTP_SERVER_PORT } = require('./config/constants');
+const { globalTimingLogger } = require('./utils/timingLogger');
 
 // Validate environment before starting
 if (!validateEnvironment()) {
@@ -78,10 +79,8 @@ function handleTwiMLRequest(req, res) {
       callSid = params.get('CallSid') || '';
       accountSid = params.get('AccountSid') || '';
     } catch (error) {
-      console.error('Error parsing TwiML POST body:', error);
+      globalTimingLogger.logError(error, 'TwiML POST parsing');
     }
-    
-    console.log('📞 Incoming call from:', callerNumber, 'CallSid:', callSid);
     
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8" ?>
 <Response>
@@ -122,15 +121,12 @@ function resetGlobalState() {
   
   // Clear greeting history
   clearAllGreetingHistory();
-  
-  console.log('🔄 Complete global state reset with all resources cleaned');
 }
 
 /*
  Easy Debug Endpoint
 */
 dispatcher.onGet("/", function (req, res) {
-  console.log('GET /');
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Hello, World!');
 });
@@ -175,7 +171,7 @@ dispatcher.onGet("/voice-token", function (req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify({ token: token.toJwt(), identity }));
   } catch (e) {
-    console.error('voice-token error', e);
+    globalTimingLogger.logError(e, 'Voice Token Generation');
     res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify({ error: 'token_generation_failed' }));
   }
@@ -198,8 +194,6 @@ dispatcher.onPost("/twiml", function (req, res) {
     callSid = req.post.CallSid || '';
     accountSid = req.post.AccountSid || '';
   }
-  
-  console.log('📞 Incoming call from:', callerNumber, 'CallSid:', callSid);
   
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8" ?>
 <Response>
@@ -226,8 +220,8 @@ dispatcher.onPost("/twiml", function (req, res) {
   Websocket Server
 */
 mediaws.on("connect", function (connection) {
-  console.log("twilio: Connection accepted");
-  new MediaStream(connection);
+  const mediaStream = new MediaStream(connection);
+  currentMediaStream = mediaStream; // Set global currentMediaStream
 });
 
 // Start the server
@@ -235,7 +229,6 @@ wsserver.listen(HTTP_SERVER_PORT, async function () {
   console.log("Server listening on: http://localhost:%s", HTTP_SERVER_PORT);
   
   // Initialize Azure TTS streaming at startup
-  console.log("🚀 Initializing Azure TTS with real-time streaming...");
   await azureTTSService.initialize();
 });
 
@@ -248,27 +241,21 @@ setInterval(() => {
   const now = Date.now();
   
   // Check Azure TTS synthesizer health
-  if (azureTTSService.isServiceReady()) {
-    console.log('🔄 Health check: Azure TTS streaming synthesizer is ready');
-  } else {
-    console.log('🔄 Health check: Azure TTS synthesizer not ready, reinitializing...');
+  if (!azureTTSService.isServiceReady()) {
     azureTTSService.initialize();
   }
   
   // Get STT connection stats
   const sttStats = deepgramSTTService.getConnectionStats();
-  console.log(`📊 Health check - STT connections: ${sttStats.activeConnections}/${sttStats.maxConnections}, Azure TTS: ${azureTTSService.isServiceReady() ? 'ready' : 'null'}, Current stream: ${currentMediaStream?.streamSid || 'none'}, SSE clients: ${sseService.getClientCount()}`);
   
   // Reset connection error cooldown if it's been long enough
   if (sttStats.lastError && sttStats.cooldownRemaining <= 0) {
-    console.log('🔄 Connection error cooldown reset');
+    // Connection error cooldown reset
   }
 }, 120000); // Every 2 minutes
 
 // Graceful shutdown handling
 process.on('SIGINT', () => {
-  console.log('\n🛑 Graceful shutdown initiated...');
-  
   // Close SSE connections
   sseService.closeAll();
   
@@ -277,14 +264,11 @@ process.on('SIGINT', () => {
   
   // Close server
   wsserver.close(() => {
-    console.log('✅ Server closed gracefully');
     process.exit(0);
   });
 });
 
 process.on('SIGTERM', () => {
-  console.log('\n🛑 SIGTERM received, shutting down gracefully...');
-  
   // Close SSE connections
   sseService.closeAll();
   
@@ -293,7 +277,6 @@ process.on('SIGTERM', () => {
   
   // Close server
   wsserver.close(() => {
-    console.log('✅ Server closed gracefully');
     process.exit(0);
   });
 });

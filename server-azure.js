@@ -530,7 +530,7 @@ function synthesizeWithAzureStreaming(text, mediaStream, retries = 3) {
       };
       
       currentMediaStream.connection.sendUTF(JSON.stringify(message));
-      console.log(`Azure TTS: Streamed ${audioChunk.length} bytes in real-time`);
+      // console.log(`Azure TTS: Streamed ${audioChunk.length} bytes in real-time`);
     }
   };
 
@@ -958,7 +958,7 @@ dispatcher.onGet("/voice-token", function (req, res) {
  Twilio streams.xml
 */
 dispatcher.onPost("/twiml", function (req, res) {
-  const websocketUrl = process.env.WEBSOCKET_URL || "wss://4a2b02bc82d8.ngrok-free.app/streams";
+  const websocketUrl = process.env.WEBSOCKET_URL || "wss://d0e1578db12a.ngrok-free.app/streams";
   
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8" ?>
 <Response>

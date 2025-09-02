@@ -14,33 +14,21 @@ const greetingNode = RunnableLambda.from(async (state) => {
     turn_count: state.turn_count
   });
   
-  // CRITICAL: If session is already initialized and greeting sent, NEVER return to greeting
-  if (state.session_initialized && state.greeting_sent && state.conversation_state !== 'greeting') {
-    console.log('🚫 BLOCKING: Session already initialized, preventing greeting regression');
+  // CRITICAL FIX: If session is already initialized, route to intent classification
+  if (state.session_initialized && state.greeting_sent) {
+    console.log('🚫 BLOCKING: Session already initialized, routing to intent classification');
     console.log('🔄 Routing directly to intent classification');
-    return { 
-      ...state,
-      conversation_state: 'active',
-      // Don't change systemPrompt here, let intent node handle it
-      call_ended: false
-    };
-  }
-  
-  // If greeting already sent but session not fully initialized (first time only)
-  if (state.greeting_sent && !state.session_initialized) {
-    // If customer and has transcript, proceed to intent classification
-    if (state.callerInfo?.type === 'customer' && state.transcript && state.transcript.trim() !== '') {
-      console.log('🔄 Customer already greeted, initializing session and proceeding to intent');
+    
+    // If we have a transcript, this should go to intent classification
+    if (state.transcript && state.transcript.trim() !== '') {
       return { 
         ...state,
-        session_initialized: true,
         conversation_state: 'active',
-        // Don't change systemPrompt here, let intent node handle it
         call_ended: false
       };
     }
-    // For non-customers or empty transcript, end the call
-    console.log('📞 Call already greeted, ending call');
+    
+    // No transcript but session initialized - end call
     return { 
       ...state, 
       systemPrompt: "Thank you for calling. Have a great day! Goodbye!",
@@ -49,25 +37,104 @@ const greetingNode = RunnableLambda.from(async (state) => {
     };
   }
   
+  // CRITICAL FIX: Handle empty transcript (auto-greeting scenario)
+  if (!state.transcript || state.transcript.trim() === '') {
+    console.log('🎯 Empty transcript - generating auto-greeting');
+    
+    // Get caller info from phonebook
+    let callerInfo = null;
+    let phoneNumber = state.phoneNumber;
+    
+    if (phoneNumber) {
+      console.log('📞 Processing auto-greeting for caller:', phoneNumber);
+      callerInfo = identifyCaller(phoneNumber);
+      
+      if (callerInfo) {
+        console.log(`✅ Caller identified: ${callerInfo.name} (${callerInfo.type}) from ${phoneNumber}`);
+      } else {
+        console.log(`❓ Unknown caller from ${phoneNumber}`);
+      }
+    } else {
+      console.log('⚠️ No phone number provided');
+      phoneNumber = "Unknown";
+    }
+    
+    // Generate personalized greeting
+    const language = state.language || 'english';
+    const greeting = await generatePersonalizedGreeting(callerInfo, phoneNumber, language);
+    
+    // Initialize session
+    const session_id = state.session_id || state.streamSid || `session_${Date.now()}`;
+    
+    // Add to conversation history
+    const conversation_history = state.conversation_history || [];
+    conversation_history.push({
+      role: 'assistant',
+      content: greeting,
+      timestamp: new Date().toISOString(),
+      type: 'auto_greeting'
+    });
+    
+    return { 
+      ...state, 
+      phoneNumber,
+      callerInfo,
+      systemPrompt: greeting,
+      greeting_sent: true,
+      session_initialized: true,
+      conversation_state: 'greeting',
+      session_id: session_id,
+      turn_count: 1,
+      conversation_history: conversation_history,
+      last_system_response: greeting,
+      call_ended: false // Keep call alive for user input
+    };
+  }
+  
+  // CRITICAL FIX: Handle transcript with already sent greeting
+  if (state.greeting_sent && state.transcript && state.transcript.trim() !== '') {
+    console.log('🔄 Greeting already sent, but we have transcript - route to intent');
+    
+    // Initialize session if not done
+    if (!state.session_initialized) {
+      const session_id = state.session_id || state.streamSid || `session_${Date.now()}`;
+      
+      return { 
+        ...state,
+        session_initialized: true,
+        conversation_state: 'active',
+        session_id: session_id,
+        call_ended: false
+      };
+    }
+    
+    // Session already initialized - route to intent
+    return { 
+      ...state,
+      conversation_state: 'active',
+      call_ended: false
+    };
+  }
+  
+  // Normal greeting flow (first time with transcript)
+  console.log('📞 Normal greeting flow with transcript');
+  
   // Get caller info from phonebook
   let callerInfo = null;
   let phoneNumber = state.phoneNumber;
   
-  // Log the phone number we received
   if (phoneNumber) {
     console.log('📞 Processing greeting for caller:', phoneNumber);
+    callerInfo = identifyCaller(phoneNumber);
+    
+    if (callerInfo) {
+      console.log(`✅ Caller identified: ${callerInfo.name} (${callerInfo.type}) from ${phoneNumber}`);
+    } else {
+      console.log(`❓ Unknown caller from ${phoneNumber}`);
+    }
   } else {
-    console.log('⚠️  No phone number provided from Twilio');
-    phoneNumber = "Unknown"; // Fallback for unknown callers
-  }
-  
-  // Identify the caller
-  callerInfo = identifyCaller(phoneNumber);
-  
-  if (callerInfo) {
-    console.log(`✅ Caller identified: ${callerInfo.name} (${callerInfo.type}) from ${phoneNumber}`);
-  } else {
-    console.log(`❓ Unknown caller from ${phoneNumber}`);
+    console.log('⚠️ No phone number provided from Twilio');
+    phoneNumber = "Unknown";
   }
   
   // Generate personalized greeting using OpenAI with language support
@@ -80,10 +147,16 @@ const greetingNode = RunnableLambda.from(async (state) => {
   // Add to conversation history
   const conversation_history = state.conversation_history || [];
   conversation_history.push({
+    role: 'user',
+    content: state.transcript,
+    timestamp: new Date().toISOString(),
+    type: 'first_utterance'
+  });
+  conversation_history.push({
     role: 'assistant',
     content: greeting,
     timestamp: new Date().toISOString(),
-    type: 'greeting'
+    type: 'greeting_response'
   });
   
   return { 

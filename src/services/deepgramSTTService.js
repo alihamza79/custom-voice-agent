@@ -2,6 +2,7 @@
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 const { DEEPGRAM_API_KEY } = require('../config/environment');
 const { MAX_CONCURRENT_STT, CONNECTION_COOLDOWN } = require('../config/constants');
+const { globalTimingLogger } = require('../utils/timingLogger');
 
 class DeepgramSTTService {
   constructor() {
@@ -16,17 +17,12 @@ class DeepgramSTTService {
     // Check rate limits and connection limits
     const now = Date.now();
     if (this.globalConnections >= MAX_CONCURRENT_STT) {
-      console.warn(`STT: Too many connections (${this.globalConnections}), refusing new connection`);
       return null;
     }
     
     if (now - this.lastConnectionError < CONNECTION_COOLDOWN) {
-      const remaining = Math.ceil((CONNECTION_COOLDOWN - (now - this.lastConnectionError)) / 1000);
-      console.warn(`STT: Connection cooldown active, ${remaining}s remaining`);
       return null;
     }
-    
-    console.log(`STT: Creating connection (${this.globalConnections + 1}/${MAX_CONCURRENT_STT}) with language: ${language}`);
     
     let reconnectCount = 0;
     const maxReconnects = 3;
@@ -35,7 +31,6 @@ class DeepgramSTTService {
     
     const createConnection = () => {
       this.globalConnections++;
-      console.log(`STT: Active connections: ${this.globalConnections}`);
       
       const deepgram = this.client.listen.live({
         // Model - Enhanced model for better accuracy
@@ -95,7 +90,6 @@ class DeepgramSTTService {
       // Track connection cleanup with unique ID
       const connectionId = `stt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       deepgram._connectionId = connectionId;
-      console.log(`STT: Connection created with ID: ${connectionId}`);
       
       // Add speech quality tracking to the connection
       deepgram._speechQuality = {

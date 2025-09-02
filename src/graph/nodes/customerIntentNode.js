@@ -2,6 +2,7 @@
 const { RunnableLambda } = require("@langchain/core/runnables");
 const OpenAI = require('openai');
 const appointmentHandler = require('../../workflows/AppointmentWorkflowHandler');
+const { globalTimingLogger } = require('../../utils/timingLogger');
 
 const openai = new OpenAI();
 
@@ -13,28 +14,28 @@ function generateWorkflowResponse(intent, transcript, language) {
       invoicing_question: "I can help you with your billing inquiry. Let me look up your account information.",
       appointment_info: "I'll get your appointment details for you right away. Let me check our system.",
       additional_demands: "I understand you have additional requests. Let me see how we can accommodate that.",
-      no_intent_detected: "Thank you for calling! How can I assist you today?"
+      no_intent_detected: "Thank you for your response! How can I assist you today?"
     },
     hindi: {
       shift_cancel_appointment: "Main aapki appointment ke saath madad karunga. Main aapke current bookings check karta hun.",
       invoicing_question: "Main aapke billing inquiry mein madad kar sakta hun. Main aapka account information dekh raha hun.",
       appointment_info: "Main aapke appointment details abhi check karta hun. Main hamara system dekh raha hun.",
       additional_demands: "Main samajh gaya aapke additional requests hain. Main dekh raha hun kaise accommodate kar sakte hain.",
-      no_intent_detected: "Call karne ke liye dhanyawad! Aaj main aapki kaise madad kar sakta hun?"
+      no_intent_detected: "Aapka jawab ke liye dhanyawad! Aaj main aapki kaise madad kar sakta hun?"
     },
     hindi_mixed: {
       shift_cancel_appointment: "Main aapki appointment ke saath help karunga. Let me check aapke current bookings.",
       invoicing_question: "Main aapke billing inquiry mein help kar sakta hun. Let me check aapka account information.",
       appointment_info: "Main aapke appointment details check karta hun right away. System dekh raha hun.",
       additional_demands: "Main samajh gaya aapke additional requests hain. Let me see kaise accommodate kar sakte hain.",
-      no_intent_detected: "Thank you for calling! Aaj main aapki kaise help kar sakta hun?"
+      no_intent_detected: "Thank you for response! Aaj main aapki kaise help kar sakta hun?"
     },
     german: {
       shift_cancel_appointment: "Gerne helfe ich Ihnen mit Ihrem Termin. Lassen Sie mich Ihre aktuellen Buchungen überprüfen.",
       invoicing_question: "Ich kann Ihnen bei Ihrer Rechnungsanfrage helfen. Ich schaue mir Ihre Kontoinformationen an.",
       appointment_info: "Ich hole sofort Ihre Termindetails für Sie. Lassen Sie mich unser System überprüfen.",
       additional_demands: "Ich verstehe, Sie haben zusätzliche Wünsche. Lassen Sie mich sehen, wie wir das ermöglichen können.",
-      no_intent_detected: "Vielen Dank für Ihren Anruf! Wie kann ich Ihnen heute helfen?"
+      no_intent_detected: "Vielen Dank für Ihre Antwort! Wie kann ich Ihnen heute helfen?"
     }
   };
   
@@ -44,19 +45,15 @@ function generateWorkflowResponse(intent, transcript, language) {
 
 // Customer intent classification node
 const customerIntentNode = RunnableLambda.from(async (state) => {
-  console.log('🎯 Processing customer intent classification...', { 
-    transcript: state.transcript,
-    callerName: state.callerInfo?.name || 'Unknown',
-    turn_count: state.turn_count,
-    conversation_state: state.conversation_state,
-    session_id: state.session_id
-  });
+  globalTimingLogger.startOperation('Intent Classification');
+  
+  // Log user input
+  globalTimingLogger.logUserInput(state.transcript);
   
   // CRITICAL: Skip intent classification if already in active LangChain workflow
   if (global.currentLangChainSession && global.currentLangChainSession.workflowActive) {
-    console.log('🚀 BYPASSING INTENT: Already in active LangChain workflow - routing directly');
+    globalTimingLogger.logMoment('Bypassing intent - already in active LangChain workflow');
     
-    // Route directly to LangChain workflow for continued conversation
     const callerInfo = {
       name: state.callerInfo?.name || 'Customer',
       phoneNumber: state.phoneNumber,
@@ -65,35 +62,36 @@ const customerIntentNode = RunnableLambda.from(async (state) => {
     };
     
     try {
-      // Continue existing workflow without intent classification overhead
-      // CRITICAL: Use streamSid to ensure session continuity
+      globalTimingLogger.startOperation('Continue Workflow');
       const workflowResult = await appointmentHandler.continueWorkflow(
-        state.streamSid, // Pass streamSid as the session identifier
+        state.streamSid,
         state.transcript,
         state.streamSid
       );
+      globalTimingLogger.endOperation('Continue Workflow');
+      
+      globalTimingLogger.logModelOutput(workflowResult.response, 'WORKFLOW RESPONSE');
       
       return {
         ...state,
-        intent: 'shift_cancel_appointment', // Keep existing intent
+        intent: 'shift_cancel_appointment',
         systemPrompt: workflowResult.response,
         call_ended: workflowResult.endCall || false,
         conversation_state: 'workflow',
         turn_count: (state.turn_count || 0) + 1,
-        workflowBypass: true // Mark as bypassed for debugging
+        workflowBypass: true
       };
       
     } catch (error) {
-      console.error('❌ Error continuing LangChain workflow:', error);
+      globalTimingLogger.logError(error, 'Continue Workflow');
       // Fall through to normal intent classification as fallback
     }
   }
   
   // Only process if we have a transcript from the customer
   if (!state.transcript || state.transcript.trim() === '') {
-    console.log('⚠️  No transcript provided for intent classification');
+    globalTimingLogger.logMoment('No transcript provided for intent classification');
     
-    // Add to conversation history
     const conversation_history = [...(state.conversation_history || [])];
     const errorResponse = "I'm sorry, I didn't catch that. Could you please tell me how I can help you today?";
     
@@ -132,6 +130,8 @@ const customerIntentNode = RunnableLambda.from(async (state) => {
     const language = state.language || 'english';
     const languageNote = language === 'english' ? '' : ` The customer is speaking in ${language}, but always respond with the English category name.`;
     
+    globalTimingLogger.startOperation('OpenAI Intent Classification');
+    
     // Use OpenAI for fast intent classification
     const systemPrompt = `You are an expert customer service intent classifier. Classify the customer's request into exactly one of these 5 categories:
 
@@ -145,6 +145,7 @@ Examples:
 - "Hello" → no_intent_detected
 - "Can you hear me?" → no_intent_detected
 - "I want to reschedule my appointment" → shift_cancel_appointment
+- "Shift appointment" → shift_cancel_appointment
 - "What's my bill?" → invoicing_question
 - "When is my next appointment?" → appointment_info
 - "I need groceries delivered too" → additional_demands
@@ -156,19 +157,20 @@ Respond with ONLY the category name, nothing else.${languageNote}`;
 Classify this into one of the 5 categories.`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // Fast model for low latency
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ],
-      temperature: 0, // Zero temperature for fastest, most consistent classification
-      max_tokens: 15, // Minimal tokens needed
+      temperature: 0,
+      max_tokens: 15,
       top_p: 1,
       frequency_penalty: 0,
       presence_penalty: 0
     });
     
     const intent = completion.choices[0].message.content.trim().toLowerCase();
+    globalTimingLogger.endOperation('OpenAI Intent Classification');
     
     // Validate intent and map to our 5 categories
     let classifiedIntent;
@@ -183,11 +185,22 @@ Classify this into one of the 5 categories.`;
     } else if (intent.includes('no_intent') || intent.includes('greeting')) {
       classifiedIntent = 'no_intent_detected';
     } else {
-      // Default fallback - let LLM decide between additional_demands and no_intent
-      classifiedIntent = intent.includes('hello') || intent.includes('hi') || intent.includes('thank') ? 'no_intent_detected' : 'additional_demands';
+      // Default fallback - analyze the raw transcript for appointment-related keywords
+      const transcript = state.transcript.toLowerCase();
+      if (transcript.includes('shift') || transcript.includes('cancel') || 
+          transcript.includes('reschedule') || transcript.includes('move') || 
+          transcript.includes('change') || transcript.includes('appointment')) {
+        classifiedIntent = 'shift_cancel_appointment';
+      } else {
+        classifiedIntent = intent.includes('hello') || intent.includes('hi') || intent.includes('thank') 
+          ? 'no_intent_detected' 
+          : 'additional_demands';
+      }
     }
     
-    // Log intent classification for analysis and future workflow development
+    // Log intent classification
+    globalTimingLogger.logIntentClassification(classifiedIntent);
+    
     const intentLog = {
       timestamp: new Date().toISOString(),
       streamSid: state.streamSid,
@@ -198,8 +211,6 @@ Classify this into one of the 5 categories.`;
       classifiedIntent: classifiedIntent,
       rawLLMResponse: intent
     };
-    
-    console.log('🎯 INTENT CLASSIFICATION:', JSON.stringify(intentLog, null, 2));
     
     // Execute workflow based on classified intent
     let workflowResponse;
@@ -213,46 +224,106 @@ Classify this into one of the 5 categories.`;
         email: state.callerInfo?.email || `${state.phoneNumber}@example.com`
       };
       
-      // IMMEDIATE FEEDBACK: Provide instant response to user while processing
-      const immediateResponse = generateWorkflowResponse(classifiedIntent, state.transcript, state.language || 'english');
-      console.log('⚡ Sending immediate feedback while processing appointment workflow...');
+      // INTELLIGENT GENERIC FILLER: Send appropriate filler based on intent
+      let immediateResponse;
+      if (classifiedIntent === 'shift_cancel_appointment') {
+        immediateResponse = "Ok, let me check your appointments...";
+      } else if (classifiedIntent.includes('check') || classifiedIntent.includes('find') || classifiedIntent.includes('search')) {
+        immediateResponse = "Ok, let me check...";
+      } else if (classifiedIntent.includes('book') || classifiedIntent.includes('schedule') || classifiedIntent.includes('create')) {
+        immediateResponse = "Ok, let me process that...";
+      } else {
+        immediateResponse = "Ok, let me help you...";
+      }
+      console.log('⚡ Sending intelligent generic filler while processing workflow...');
       
-      // CRITICAL: First send immediate feedback, then process workflow
-      // This creates the perception of low latency for the user
+      // SPEAK GENERIC FILLER IMMEDIATELY - PARALLEL TO LangChain workflow
+      globalTimingLogger.logFillerWord(immediateResponse);
+      
+      // Start filler speaking in parallel (don't await it)
+      const fillerPromise = (async () => {
+        try {
+          const { getCurrentMediaStream } = require('../../server');
+          const mediaStream = getCurrentMediaStream();
+          
+          if (mediaStream) {
+            globalTimingLogger.startOperation('Filler TTS');
+            
+            // Set up mediaStream for TTS
+            mediaStream.speaking = true;
+            mediaStream.ttsStart = Date.now();
+            mediaStream.firstByte = true;
+            mediaStream.currentMediaStream = mediaStream;
+            
+            // Speak the generic filler immediately
+            const azureTTSService = require('../../services/azureTTSService');
+            await azureTTSService.synthesizeStreaming(
+              immediateResponse,
+              mediaStream,
+              state.language || 'english'
+            );
+            globalTimingLogger.endOperation('Filler TTS');
+          } else {
+            globalTimingLogger.logError(new Error('No mediaStream available'), 'Filler TTS');
+          }
+        } catch (error) {
+          globalTimingLogger.logError(error, 'Filler TTS');
+        }
+      })();
+      
+      // Don't await fillerPromise - let it run in parallel
+      globalTimingLogger.logMoment('Filler started in parallel - continuing with LangChain workflow');
+      
+      // Small delay to ensure filler starts first
+      await new Promise(resolve => setTimeout(resolve, 50));
       
       let immediateResponseSent = false;
       const immediateCallback = (response) => {
         if (!immediateResponseSent && global.sendImmediateFeedback) {
-          console.log('📢 IMMEDIATE RESPONSE:', response);
+          globalTimingLogger.logMoment('LangChain immediate callback triggered');
           global.sendImmediateFeedback(response);
           immediateResponseSent = true;
+        } else {
+          globalTimingLogger.logMoment('Cannot send immediate feedback - already sent or no callback');
         }
       };
       
-      // Use the optimized handler that maintains session continuity
-      const workflowResult = await appointmentHandler.handleShiftCancelIntent(
-        callerInfo,
-        state.transcript,
-        state.language || 'english',
-        state.session_id || state.streamSid, // Use consistent session_id
-        immediateCallback // Pass callback for immediate feedback
-      );
+      // Use the optimized handler
+      globalTimingLogger.startOperation('LangChain Workflow');
       
-      workflowResponse = workflowResult.systemPrompt;
-      workflowData = workflowResult.workflowData;
+      try {
+        const workflowResult = await appointmentHandler.handleShiftCancelIntent(
+          callerInfo,
+          state.transcript,
+          state.language || 'english',
+          state.session_id || state.streamSid,
+          immediateCallback
+        );
+        globalTimingLogger.endOperation('LangChain Workflow');
+        
+        globalTimingLogger.logModelOutput(workflowResult.systemPrompt, 'WORKFLOW RESPONSE');
+        workflowResponse = workflowResult.systemPrompt;
+        workflowData = workflowResult.workflowData;
+      } catch (error) {
+        globalTimingLogger.logError(error, 'LangChain Workflow');
+        globalTimingLogger.endOperation('LangChain Workflow');
+        // Fallback response
+        workflowResponse = "I'm sorry, I'm having trouble processing your request right now. Please try again.";
+        workflowData = null;
+      }
       
-      // Store session info for follow-up handling (if needed)
-      if (!workflowResult.call_ended) {
-        console.log('📋 STORING LangChain session for continued workflow handling');
+      // Only log and process workflowResult if it exists (try block succeeded)
+      if (workflowResponse && workflowData) {
+        globalTimingLogger.logMoment('Storing LangChain session for continued workflow handling');
         global.currentLangChainSession = {
           streamSid: state.streamSid,
           sessionId: state.session_id,
           handler: appointmentHandler,
           sessionActive: true,
-          workflowActive: true  // Mark workflow as actively running
+          workflowActive: true
         };
       } else {
-        console.log('📋 CLEARING LangChain session - workflow ended');
+        globalTimingLogger.logMoment('No workflow result to process');
         global.currentLangChainSession = null;
       }
       
@@ -263,7 +334,7 @@ Classify this into one of the 5 categories.`;
     
     // DUPLICATE CHECK: Prevent repeating the same response
     if (state.last_system_response === workflowResponse) {
-      console.log('🚫 BLOCKING: Preventing duplicate response');
+      globalTimingLogger.logMoment('Preventing duplicate response');
       workflowResponse = "Let me help you with that in a different way. What specifically would you like me to assist you with?";
     }
     
@@ -276,25 +347,30 @@ Classify this into one of the 5 categories.`;
       intent: classifiedIntent
     });
     
-    return {
+    const result = {
       ...state,
       intent: classifiedIntent,
       intentLog: intentLog,
       systemPrompt: workflowResponse,
       workflowData: workflowData,
-      workflowCompleted: classifiedIntent !== 'no_intent_detected', // Mark workflow as completed for non-greeting intents
-      call_ended: false, // Keep call alive for more utterances
+      workflowCompleted: classifiedIntent !== 'no_intent_detected',
+      call_ended: false,
       conversation_history: conversation_history,
       last_system_response: workflowResponse,
       turn_count: (state.turn_count || 0) + 1,
       conversation_state: classifiedIntent === 'shift_cancel_appointment' ? 'workflow' : 'active',
-      session_initialized: true // Ensure session is marked as initialized
+      session_initialized: true
     };
     
-  } catch (error) {
-    console.error('❌ Error in customer intent classification:', error);
+    globalTimingLogger.endOperation('Intent Classification');
+    globalTimingLogger.logModelOutput(workflowResponse, 'FINAL RESPONSE');
     
-    // Add error response to conversation history
+    return result;
+    
+  } catch (error) {
+    globalTimingLogger.logError(error, 'Intent Classification');
+    globalTimingLogger.endOperation('Intent Classification');
+    
     const conversation_history = [...(state.conversation_history || [])];
     const errorResponse = "I'd be happy to help you. I'm processing this as a general request. Thank you for calling, and we'll assist you accordingly. Goodbye!";
     

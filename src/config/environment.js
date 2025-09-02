@@ -11,7 +11,7 @@ const requiredEnvVars = {
 
 const optionalEnvVars = {
   OPENAI_MODEL: process.env.OPENAI_MODEL,
-  WEBSOCKET_URL: process.env.WEBSOCKET_URL || "wss://4a2b02bc82d8.ngrok-free.app/streams",
+  WEBSOCKET_URL: process.env.WEBSOCKET_URL || "wss://d0e1578db12a.ngrok-free.app/streams",
   TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
   TWILIO_API_KEY_SID: process.env.TWILIO_API_KEY_SID,
   TWILIO_API_KEY_SECRET: process.env.TWILIO_API_KEY_SECRET,

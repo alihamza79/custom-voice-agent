@@ -5,6 +5,7 @@ const { setupSTTListeners } = require('../handlers/sttEventHandlers');
 const { clearGreetingHistory } = require('../handlers/greetingHandler');
 const languageStateService = require('../services/languageStateService');
 const { getGreetingLanguage, getDeepgramLanguage } = require('../utils/languageDetection');
+const { globalTimingLogger } = require('../utils/timingLogger');
 
 class MediaStream {
   constructor(connection) {
@@ -20,7 +21,6 @@ class MediaStream {
     this.callerNumber = null;
     this.callSid = null;
     this.accountSid = null;
-    // Language is now managed by global languageStateService
     
     // Prompt metadata (defaults)
     this.systemPrompt = 'You are helpful and concise.';
@@ -38,8 +38,10 @@ class MediaStream {
     this.speaking = false;
     this.sendFirstSentenceInputTime = null;
     
-    // Greeting tracking
+    // CRITICAL FIX: Proper greeting tracking
     this.hasGreeted = false;
+    this.greetingSent = false;
+    this.awaitingFirstInput = true; // Track if we're waiting for first user input
     
     // Current media stream reference
     this.currentMediaStream = null;
@@ -72,11 +74,8 @@ class MediaStream {
 
   // Setup STT connection with error handling and language detection
   setupSTTConnection() {
-    // Start with multi-language for best compatibility
-    // Language will be detected dynamically from speech through global service
     console.log(`🌐 Starting STT with multi-language support for dynamic detection`);
     
-    // Always use 'multi' for initial connection to handle any language
     const connectionData = deepgramSTTService.createConnection(this, 'multi');
     if (!connectionData) {
       console.warn('MediaStream: STT connection failed, will retry later');
@@ -118,17 +117,101 @@ class MediaStream {
     console.log('🔄 MediaStream global variables reset for new call');
   }
 
+  // CRITICAL FIX: Send automatic greeting immediately when call starts
+  sendImmediateGreeting() {
+    if (this.greetingSent || !this.streamSid) {
+      return;
+    }
+
+    globalTimingLogger.startOperation('Immediate Greeting');
+    
+    // Mark greeting as sent to prevent duplicates
+    this.greetingSent = true;
+    this.hasGreeted = true;
+    this.awaitingFirstInput = true;
+    
+    // Set current stream for TTS routing
+    this.currentMediaStream = this;
+    
+    // Generate thread ID for session continuity
+    if (!this.threadId) {
+      this.threadId = this.streamSid || `thread_${Date.now()}`;
+    }
+    
+    // Import router here to avoid circular dependencies
+    const { runCallerIdentificationGraph } = require('../graph');
+    
+    // Run graph with empty transcript to trigger greeting
+    runCallerIdentificationGraph({ 
+      transcript: '', // Empty transcript triggers greeting generation
+      streamSid: this.threadId,
+      phoneNumber: this.callerNumber,
+      callSid: this.callSid,
+      language: 'english', // Will be updated when user speaks
+      from: this.callerNumber
+    })
+      .then((result) => {
+        if (result && result.systemPrompt) {
+          globalTimingLogger.logModelOutput(result.systemPrompt, 'GREETING');
+          
+          // Store caller info for future use
+          if (result.callerInfo) {
+            this.callerInfo = result.callerInfo;
+            globalTimingLogger.logMoment('Caller info stored');
+          }
+          
+          // Send greeting via TTS
+          globalTimingLogger.startOperation('Greeting TTS');
+          this.speaking = true;
+          this.ttsStart = Date.now();
+          this.firstByte = true;
+          
+          azureTTSService.synthesizeStreaming(result.systemPrompt, this, 'english')
+            .then(() => {
+              globalTimingLogger.endOperation('Greeting TTS');
+              globalTimingLogger.endOperation('Immediate Greeting');
+            })
+            .catch((error) => {
+              globalTimingLogger.logError(error, 'Greeting TTS');
+              globalTimingLogger.endOperation('Immediate Greeting');
+            });
+        }
+      })
+      .catch((error) => {
+        globalTimingLogger.logError(error, 'Immediate Greeting');
+        
+        // Fallback greeting
+        const fallbackGreeting = `Hello! Thank you for calling. How can I assist you today?`;
+        globalTimingLogger.logModelOutput(fallbackGreeting, 'FALLBACK GREETING');
+        
+        globalTimingLogger.startOperation('Fallback Greeting TTS');
+        this.speaking = true;
+        this.ttsStart = Date.now();
+        this.firstByte = true;
+        
+        azureTTSService.synthesizeStreaming(fallbackGreeting, this, 'english')
+          .then(() => {
+            globalTimingLogger.endOperation('Fallback Greeting TTS');
+            globalTimingLogger.endOperation('Immediate Greeting');
+          })
+          .catch((error) => {
+            globalTimingLogger.logError(error, 'Fallback Greeting TTS');
+            globalTimingLogger.endOperation('Immediate Greeting');
+          });
+      });
+  }
+
   // Function to process incoming messages
   processMessage(message) {
     if (message.type === "utf8") {
       let data = JSON.parse(message.utf8Data);
       
       if (data.event === "connected") {
-        console.log("twilio: Connected event received: ", data);
+        globalTimingLogger.logMoment('Twilio connected');
       }
       
       if (data.event === "start") {
-        console.log("twilio: Start event received: ", data);
+        globalTimingLogger.logSessionStart(data.start.streamSid);
         
         // Extract caller information from Twilio start event
         if (data.start) {
@@ -136,11 +219,10 @@ class MediaStream {
           this.callSid = data.start.callSid;
           this.accountSid = data.start.accountSid;
           
-          // Extract caller number from customParameters passed from TwiML
+          // Extract caller number from customParameters
           if (data.start.customParameters) {
             this.callerNumber = data.start.customParameters.callerNumber || data.start.customParameters.From || data.start.customParameters.from;
             
-            // Also extract callSid and accountSid from custom parameters if available
             if (!this.callSid && data.start.customParameters.callSid) {
               this.callSid = data.start.customParameters.callSid;
             }
@@ -154,15 +236,15 @@ class MediaStream {
             this.callerNumber = data.start.from || data.start.From;
           }
           
-          console.log("📞 Caller information extracted:", {
-            callSid: this.callSid,
-            streamSid: this.streamSid,
-            callerNumber: this.callerNumber || "Unknown",
-            accountSid: this.accountSid
-          });
+          globalTimingLogger.logMoment('Caller information extracted');
           
           // Initialize global language state for this call
           languageStateService.initializeCall(this.streamSid, 'english');
+          
+          // CRITICAL FIX: Send greeting immediately when call starts
+          setTimeout(() => {
+            this.sendImmediateGreeting();
+          }, 500); // Small delay to ensure connections are ready
         }
         
         this.resetGlobalState();
@@ -170,8 +252,7 @@ class MediaStream {
       
       if (data.event === "media") {
         if (!this.hasSeenMedia) {
-          console.log("twilio: Media event received: ", data);
-          console.log("twilio: Suppressing additional messages...");
+          globalTimingLogger.logMoment('First media packet received');
           this.hasSeenMedia = true;
         }
         
@@ -179,7 +260,7 @@ class MediaStream {
         if (!this.streamSid) {
           console.log('twilio: setting MediaStream streamSid to:', data.streamSid);
           this.streamSid = data.streamSid;
-          this.fallbackStreamSid = data.streamSid; // Backup reference
+          this.fallbackStreamSid = data.streamSid;
           console.log('twilio: MediaStream threadId:', this.threadId, 'streamSid:', this.streamSid);
         }
         
@@ -190,7 +271,6 @@ class MediaStream {
           if (this.deepgram) {
             this.deepgram.send(rawAudio);
           } else {
-            // STT connection might be rate limited, attempt to retry setup
             this.scheduleSTTRetry();
           }
         }
@@ -211,7 +291,7 @@ class MediaStream {
 
   // Function to handle connection close
   close() {
-    console.log("twilio: Closed - streamSid:", this.streamSid);
+    globalTimingLogger.logSessionEnd();
     
     // Clean up LangChain appointment sessions
     if (this.streamSid) {
@@ -234,10 +314,8 @@ class MediaStream {
       const connectionId = this.deepgram._connectionId;
       
       try {
-        // Clean up connection-specific resources
         deepgramSTTService.cleanupConnection(connectionId);
         
-        // Clean up debounce timers for this connection
         if (this.deepgram._cleanupDebounce) {
           this.deepgram._cleanupDebounce();
         }
@@ -251,7 +329,6 @@ class MediaStream {
     
     // Clear currentMediaStream if it points to this connection
     if (this.currentMediaStream === this) {
-      // Cancel any ongoing Azure TTS synthesis
       azureTTSService.cancelCurrentSynthesis();
       
       this.currentMediaStream = null;
@@ -283,6 +360,8 @@ class MediaStream {
       hasTTS: azureTTSService.isServiceReady(),
       speaking: this.speaking,
       hasGreeted: this.hasGreeted,
+      greetingSent: this.greetingSent,
+      awaitingFirstInput: this.awaitingFirstInput,
       isActive: this.isActive()
     };
   }
