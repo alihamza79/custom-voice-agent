@@ -17,6 +17,7 @@ if (!validateEnvironment()) {
 const sseService = require('./services/sseService');
 const azureTTSService = require('./services/azureTTSService');
 const deepgramSTTService = require('./services/deepgramSTTService');
+const whatsappService = require('./services/whatsappService');
 
 // Models
 const MediaStream = require('./models/MediaStream');
@@ -227,9 +228,18 @@ mediaws.on("connect", function (connection) {
 // Start the server
 wsserver.listen(HTTP_SERVER_PORT, async function () {
   console.log("Server listening on: http://localhost:%s", HTTP_SERVER_PORT);
-  
+
   // Initialize Azure TTS streaming at startup
   await azureTTSService.initialize();
+
+  // Initialize WhatsApp service for notifications
+  try {
+    await whatsappService.initialize();
+    console.log('✅ WhatsApp service initialized successfully');
+  } catch (error) {
+    console.warn('⚠️ WhatsApp service initialization failed:', error.message);
+    console.log('📱 WhatsApp will work in mock mode');
+  }
 });
 
 // Pre-compile LangGraph once at startup to reduce first-call latency

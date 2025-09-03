@@ -77,15 +77,17 @@ class WhatsAppService {
   async notifyOffice(message, appointmentDetails = null) {
     try {
       const officeNumbers = [
-        '+1234567890', // Main office
-        '+1234567891'  // Manager
+        process.env.OFFICE_NUMBER || '+1234567890', // Main office from env
+        // You can add more office numbers here if needed
       ];
 
       const results = [];
-      
+
       for (const number of officeNumbers) {
-        const result = await this.notifyTeamMember(number, message);
-        results.push({ number, result });
+        if (number && number !== '+1234567890') { // Skip if not configured
+          const result = await this.notifyTeamMember(number, message);
+          results.push({ number, result });
+        }
       }
 
       return results;
