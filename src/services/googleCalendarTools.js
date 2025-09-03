@@ -5,6 +5,7 @@ const { DynamicStructuredTool, DynamicTool } = require("@langchain/core/tools");
 const { z } = require("zod");
 const calendarService = require('./googleCalendarService');
 const whatsappService = require('./whatsappService');
+const backgroundLogger = require('./backgroundLogger');
 
 class GoogleCalendarTools {
   constructor() {
@@ -95,6 +96,20 @@ class GoogleCalendarTools {
           newTime: z.string().optional().describe("New time if shifting (e.g., '2 PM tomorrow')")
         }),
         func: async ({ selection, action, newDateTime, newTime }) => {
+          const operationStartTime = Date.now();
+          let auditLogData = {
+            sessionId: global.currentSessionId || `session_${Date.now()}`,
+            callerId: null,
+            appointmentId: null,
+            operation: action,
+            beforeState: null,
+            afterState: null,
+            changeMetadata: {},
+            processingTime: 0,
+            success: false,
+            errors: []
+          };
+
           try {
             console.log(`🔧 Processing appointment: "${selection}", action: "${action}"`);
 
@@ -104,6 +119,8 @@ class GoogleCalendarTools {
               type: 'customer'
             };
 
+            auditLogData.callerId = callerInfo.phoneNumber;
+
             // Get fresh appointments data
             const appointments = await calendarService.getAppointments(callerInfo, true);
             const selectedAppointment = this.findAppointmentBySelection(selection, appointments);
@@ -112,18 +129,43 @@ class GoogleCalendarTools {
               return `I couldn't find an appointment matching "${selection}". Please specify which appointment from your list.`;
             }
 
+            auditLogData.appointmentId = selectedAppointment.id;
+            auditLogData.beforeState = selectedAppointment; // Full Google Calendar appointment data
+
             const appointmentDate = new Date(selectedAppointment.start.dateTime);
             const appointmentName = selectedAppointment.summary;
 
             // Execute the action
             if (action === "cancel") {
               // Cancel the appointment
-              await calendarService.cancelAppointment(selectedAppointment.id);
+              const cancelResult = await calendarService.cancelAppointment(selectedAppointment.id);
 
               // Send WhatsApp notification
-              const message = `🔔 APPOINTMENT CANCELLED\n👤 ${callerInfo.name}\n📅 ${appointmentName}\n📆 Was scheduled: ${appointmentDate.toLocaleDateString()}\n❌ Status: Cancelled`;
+              const message = `🔔 APPOINTMENT CANCELLED\n👤 ${callerInfo.name}\n📅 ${appointmentName}\n📆 Was scheduled: ${appointmentDate.toLocaleDateString()}\n❌ Status: Cancelled\n📞 Contact: ${callerInfo.phoneNumber}`;
 
-              await whatsappService.notifyOffice(message);
+              let whatsappResult;
+              try {
+                whatsappResult = await whatsappService.notifyOffice(message);
+              } catch (whatsappError) {
+                auditLogData.errors.push({
+                  component: 'whatsapp_notification',
+                  error: whatsappError.message,
+                  timestamp: new Date()
+                });
+              }
+
+              // Complete audit log for cancel operation
+              auditLogData.afterState = { ...selectedAppointment, status: 'cancelled' }; // Full cancelled appointment data
+              auditLogData.changeMetadata = {
+                whatsappNotificationSent: !!whatsappResult,
+                whatsappRecipient: 'office',
+                whatsappMessageId: whatsappResult?.[0]?.result?.messageId
+              };
+              auditLogData.processingTime = Date.now() - operationStartTime;
+              auditLogData.success = true;
+
+              // Log to database (zero latency)
+              await backgroundLogger.logAppointmentChange(auditLogData);
 
               return `✅ Perfect! I've cancelled your ${appointmentName} appointment that was scheduled for ${appointmentDate.toLocaleDateString()}. You'll receive a confirmation notification shortly. Is there anything else I can help you with?`;
 
@@ -140,7 +182,7 @@ class GoogleCalendarTools {
               const newEndTime = new Date(newDateTimeObj.getTime() + duration);
 
               // Update the appointment
-              await calendarService.updateAppointment(selectedAppointment.id, {
+              const updateResult = await calendarService.updateAppointment(selectedAppointment.id, {
                 start: {
                   dateTime: newDateTimeObj.toISOString(),
                   timeZone: selectedAppointment.start.timeZone
@@ -156,29 +198,74 @@ class GoogleCalendarTools {
               const isSameDay = appointmentDate.toDateString() === today.toDateString();
               const isShiftingToToday = newDateTimeObj.toDateString() === today.toDateString();
 
-              let message, notificationType;
-              if (isSameDay && isShiftingToToday) {
+              const shiftType = (isSameDay && isShiftingToToday) ? 'same-day' : 'different-day';
+
+              let message, target, whatsappResult;
+
+              if (shiftType === 'same-day') {
                 // Same-day shift
-                message = `🔔 SAME-DAY SHIFT REQUEST\n👤 ${callerInfo.name}\n📅 ${appointmentName}\n🕐 New time: ${newDateTimeObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}\n📍 Original: ${appointmentDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
-                notificationType = 'teammate';
+                message = `🔔 SAME-DAY SHIFT REQUEST\n👤 ${callerInfo.name}\n📅 ${appointmentName}\n🕐 New time: ${newDateTimeObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}\n📍 Original: ${appointmentDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}\n📞 Contact: ${callerInfo.phoneNumber}`;
+                target = 'teammate';
+
+                try {
+                  whatsappResult = await whatsappService.notifyTeamMember(
+                    process.env.TEAMMATE_NUMBER,
+                    message
+                  );
+                } catch (whatsappError) {
+                  auditLogData.errors.push({
+                    component: 'whatsapp_notification',
+                    error: whatsappError.message,
+                    timestamp: new Date()
+                  });
+                }
+
               } else {
                 // Different day shift
-                message = `🔔 RESCHEDULE REQUEST\n👤 ${callerInfo.name}\n📅 ${appointmentName}\n📆 New: ${newDateTimeObj.toLocaleDateString()} ${newDateTimeObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}\n📅 Original: ${appointmentDate.toLocaleDateString()} ${appointmentDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
-                notificationType = 'office';
+                message = `🔔 RESCHEDULE REQUEST\n👤 ${callerInfo.name}\n📅 ${appointmentName}\n📆 New: ${newDateTimeObj.toLocaleDateString()} ${newDateTimeObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}\n📅 Original: ${appointmentDate.toLocaleDateString()} ${appointmentDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}\n📞 Contact: ${callerInfo.phoneNumber}`;
+                target = 'office';
+
+                try {
+                  whatsappResult = await whatsappService.notifyOffice(message);
+                } catch (whatsappError) {
+                  auditLogData.errors.push({
+                    component: 'whatsapp_notification',
+                    error: whatsappError.message,
+                    timestamp: new Date()
+                  });
+                }
               }
 
-              // Send appropriate notification
-              if (notificationType === 'teammate') {
-                await whatsappService.notifyTeamMember(process.env.TEAMMATE_NUMBER || '+1234567890', message);
-              } else {
-                await whatsappService.notifyOffice(message);
-              }
+              // Complete audit log for shift operation
+              auditLogData.afterState = updateResult;
+              auditLogData.changeMetadata = {
+                shiftType: shiftType,
+                whatsappNotificationSent: !!whatsappResult,
+                whatsappRecipient: target,
+                whatsappMessageId: whatsappResult?.messageId || whatsappResult?.[0]?.result?.messageId
+              };
+              auditLogData.processingTime = Date.now() - operationStartTime;
+              auditLogData.success = true;
 
-              return `✅ I've rescheduled your ${appointmentName} from ${appointmentDate.toLocaleDateString()} ${appointmentDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} to ${newDateTimeObj.toLocaleDateString()} ${newDateTimeObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}. ${notificationType === 'teammate' ? 'Mike will contact you shortly to confirm.' : 'Our office will contact you to confirm.'} Is there anything else I can help you with?`;
+              // Log to database (zero latency)
+              await backgroundLogger.logAppointmentChange(auditLogData);
+
+              return `✅ I've rescheduled your ${appointmentName} from ${appointmentDate.toLocaleDateString()} ${appointmentDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} to ${newDateTimeObj.toLocaleDateString()} ${newDateTimeObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}. ${target === 'teammate' ? 'Mike will contact you shortly to confirm.' : 'Our office will contact you to confirm.'} Is there anything else I can help you with?`;
             }
 
           } catch (error) {
             console.error('❌ Appointment processing failed:', error.message);
+
+            // Log error to database
+            auditLogData.errors.push({
+              component: 'appointment_processing',
+              error: error.message,
+              stack: error.stack,
+              timestamp: new Date()
+            });
+            auditLogData.processingTime = Date.now() - operationStartTime;
+
+            await backgroundLogger.logAppointmentChange(auditLogData);
 
             // Provide helpful fallback
             return `I'm having trouble processing your appointment request right now. Could you please try again or contact our office directly?`;
@@ -199,6 +286,20 @@ class GoogleCalendarTools {
           description: z.string().optional().describe("Additional details")
         }),
         func: async ({ summary, dateTime, duration = 60, description }) => {
+          const operationStartTime = Date.now();
+          let auditLogData = {
+            sessionId: global.currentSessionId || `session_${Date.now()}`,
+            callerId: null,
+            appointmentId: null,
+            operation: 'create',
+            beforeState: null,
+            afterState: null,
+            changeMetadata: {},
+            processingTime: 0,
+            success: false,
+            errors: []
+          };
+
           try {
             const callerInfo = global.currentCallerInfo || {
               name: 'Customer',
@@ -206,8 +307,16 @@ class GoogleCalendarTools {
               type: 'customer'
             };
 
+            auditLogData.callerId = callerInfo.phoneNumber;
+
             const startDateTime = this.parseNewDateTime(dateTime);
             if (!startDateTime) {
+              auditLogData.errors.push({
+                component: 'date_parsing',
+                error: `Could not parse dateTime: ${dateTime}`,
+                timestamp: new Date()
+              });
+              await backgroundLogger.logAppointmentChange(auditLogData);
               return "I couldn't understand the date and time. Please specify something like 'tomorrow at 2 PM' or 'next Monday at 10 AM'.";
             }
 
@@ -225,17 +334,71 @@ class GoogleCalendarTools {
               }]
             };
 
+            // Store the intended appointment data before creation
+            auditLogData.beforeState = null; // No previous state for new appointments
+            auditLogData.afterState = {
+              summary: appointmentData.summary,
+              description: appointmentData.description,
+              start: {
+                dateTime: appointmentData.startDateTime,
+                timeZone: appointmentData.timeZone
+              },
+              end: {
+                dateTime: appointmentData.endDateTime,
+                timeZone: appointmentData.timeZone
+              },
+              attendees: appointmentData.attendees,
+              status: 'confirmed'
+            };
+
             const result = await calendarService.createAppointment(appointmentData);
 
-            // Send confirmation notification
-            const message = `🔔 NEW APPOINTMENT BOOKED\n👤 ${callerInfo.name}\n📅 ${summary}\n📆 ${startDateTime.toLocaleDateString()} ${startDateTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}\n⏱️ Duration: ${duration} minutes`;
+            // Update with actual Google Calendar result
+            auditLogData.appointmentId = result.id;
+            auditLogData.afterState = result; // Use the actual Google Calendar response
 
-            await whatsappService.notifyOffice(message);
+            // Send confirmation notification
+            const message = `🔔 NEW APPOINTMENT BOOKED\n👤 ${callerInfo.name}\n📅 ${summary}\n📆 ${startDateTime.toLocaleDateString()} ${startDateTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}\n⏱️ Duration: ${duration} minutes\n🆔 ID: ${result.id}`;
+
+            let whatsappResult;
+            try {
+              whatsappResult = await whatsappService.notifyOffice(message);
+            } catch (whatsappError) {
+              auditLogData.errors.push({
+                component: 'whatsapp_notification',
+                error: whatsappError.message,
+                timestamp: new Date()
+              });
+            }
+
+            // Complete audit log for create operation
+            auditLogData.changeMetadata = {
+              whatsappNotificationSent: !!whatsappResult,
+              whatsappRecipient: 'office',
+              whatsappMessageId: whatsappResult?.messageId || whatsappResult?.[0]?.result?.messageId
+            };
+            auditLogData.processingTime = Date.now() - operationStartTime;
+            auditLogData.success = true;
+
+            // Log actual appointment data to database (zero latency)
+            await backgroundLogger.logAppointmentChange(auditLogData);
 
             return `✅ Great! I've scheduled your ${summary} for ${startDateTime.toLocaleDateString()} at ${startDateTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}. You'll receive a confirmation notification. Is there anything else I can help you with?`;
 
           } catch (error) {
             console.error('❌ Appointment creation failed:', error.message);
+
+            // Log error to database
+            auditLogData.errors.push({
+              component: 'appointment_creation',
+              error: error.message,
+              stack: error.stack,
+              timestamp: new Date()
+            });
+            auditLogData.processingTime = Date.now() - operationStartTime;
+
+            await backgroundLogger.logAppointmentChange(auditLogData);
+
             return "I'm having trouble scheduling that appointment right now. Please try again or contact our office directly.";
           }
         },

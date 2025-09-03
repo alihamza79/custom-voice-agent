@@ -109,9 +109,17 @@ class WhatsAppService {
       let appointmentsText = '';
       if (appointmentDetails && appointmentDetails.length > 0) {
         appointmentsText = appointmentDetails.map((apt, index) => {
-          const date = new Date(apt.start.dateTime).toLocaleDateString();
-          const time = new Date(apt.start.dateTime).toLocaleTimeString();
-          return `${index + 1}. ${apt.summary} - ${date} at ${time}`;
+          // Handle different appointment data formats
+          const startTime = apt.start?.dateTime || apt.startDateTime;
+          const summary = apt.summary || 'Appointment';
+
+          if (startTime) {
+            const date = new Date(startTime).toLocaleDateString();
+            const time = new Date(startTime).toLocaleTimeString();
+            return `${index + 1}. ${summary} - ${date} at ${time}`;
+          } else {
+            return `${index + 1}. ${summary} - Date/time not available`;
+          }
         }).join('\n');
       } else {
         appointmentsText = 'No appointments found in system';

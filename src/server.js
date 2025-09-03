@@ -18,6 +18,7 @@ const sseService = require('./services/sseService');
 const azureTTSService = require('./services/azureTTSService');
 const deepgramSTTService = require('./services/deepgramSTTService');
 const whatsappService = require('./services/whatsappService');
+const dbManager = require('./services/databaseConnection');
 
 // Models
 const MediaStream = require('./models/MediaStream');
@@ -231,6 +232,15 @@ wsserver.listen(HTTP_SERVER_PORT, async function () {
 
   // Initialize Azure TTS streaming at startup
   await azureTTSService.initialize();
+
+  // Initialize database connection for audit logging
+  try {
+    await dbManager.getConnection();
+    console.log('✅ Database connection initialized successfully');
+  } catch (error) {
+    console.warn('⚠️ Database connection failed:', error.message);
+    console.log('📊 Audit logging will use fallback storage');
+  }
 
   // Initialize WhatsApp service for notifications
   try {
