@@ -12,7 +12,8 @@ const { google } = require('googleapis');
 const { MongoClient } = require('mongodb');
 const twilio = require('twilio');
 const calendarService = require('../services/googleCalendarService');
-const calendarTools = require('../services/googleCalendarTools');
+const { getTools: getCalendarTools } = require('../services/googleCalendarTools');
+const sessionManager = require('../services/sessionManager');
 
 class LangChainAppointmentWorkflow {
   constructor() {
@@ -20,7 +21,7 @@ class LangChainAppointmentWorkflow {
     this.calendar = null;
     this.twilioClient = null;
     this.mongoClient = null;
-    this.appointmentCache = new Map();
+    // REMOVED: this.appointmentCache - now per-caller via sessionManager
     this.cacheExpiry = 5 * 60 * 1000;
   }
 
@@ -132,11 +133,14 @@ IMPORTANT: Always be helpful and proactive. Don't wait for perfect input - work 
 
   // Create improved tools for the agent using real Google Calendar
   async createTools(sessionId, callerInfo) {
-    // Set global caller info for tools to access
-    global.currentCallerInfo = callerInfo;
+    // Extract streamSid from sessionId for session management
+    const streamSid = sessionId.replace('session_', '');
+    
+    // Store caller info in session instead of global
+    sessionManager.setCallerInfo(streamSid, callerInfo);
 
-    // Use the real Google Calendar tools
-    return calendarTools.getTools();
+    // Use the real Google Calendar tools (they'll access via sessionManager)
+    return getCalendarTools(streamSid); // Pass streamSid for session isolation
   }
 
   // Process user input with better error handling
@@ -206,9 +210,10 @@ IMPORTANT: Always be helpful and proactive. Don't wait for perfect input - work 
     }
   }
 
-  // Get caller info helper (now uses real data from caller identification)
+  // Get caller info helper (now uses session-based data)
   getCallerInfo(streamSid) {
-    return global.currentCallerInfo || {
+    const session = sessionManager.getSession(streamSid);
+    return session.callerInfo || {
       name: 'Customer',
       phoneNumber: '+1234567890',
       type: 'customer',

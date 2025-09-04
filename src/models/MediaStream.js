@@ -4,6 +4,7 @@ const azureTTSService = require('../services/azureTTSService');
 const { setupSTTListeners } = require('../handlers/sttEventHandlers');
 const { clearGreetingHistory } = require('../handlers/greetingHandler');
 const languageStateService = require('../services/languageStateService');
+const sessionManager = require('../services/sessionManager');
 const { getGreetingLanguage, getDeepgramLanguage } = require('../utils/languageDetection');
 const { globalTimingLogger } = require('../utils/timingLogger');
 
@@ -241,6 +242,18 @@ class MediaStream {
           // Initialize global language state for this call
           languageStateService.initializeCall(this.streamSid, 'english');
           
+          // Register this MediaStream with sessionManager
+          sessionManager.setMediaStream(this.streamSid, this);
+          
+          // Set caller info in session
+          if (this.callerNumber) {
+            sessionManager.setCallerInfo(this.streamSid, {
+              phoneNumber: this.callerNumber,
+              callSid: this.callSid,
+              accountSid: this.accountSid
+            });
+          }
+          
           // CRITICAL FIX: Send greeting immediately when call starts
           setTimeout(() => {
             this.sendImmediateGreeting();
@@ -293,8 +306,15 @@ class MediaStream {
   close() {
     globalTimingLogger.logSessionEnd();
     
-    // Clean up LangChain appointment sessions
+    // Clean up session using sessionManager
     if (this.streamSid) {
+      try {
+        sessionManager.cleanupSession(this.streamSid, 'connection_closed');
+      } catch (e) {
+        console.warn('SessionManager: Error cleaning up session:', e.message);
+      }
+      
+      // LEGACY: Clean up LangChain appointment sessions for backward compatibility
       try {
         const appointmentHandler = require('../workflows/AppointmentWorkflowHandler');
         appointmentHandler.endSession(this.streamSid);
@@ -303,10 +323,10 @@ class MediaStream {
       }
     }
     
-    // Clean up global session state
+    // LEGACY: Clean up global session state (will be removed later)
     if (global.currentLangChainSession && global.currentLangChainSession.streamSid === this.streamSid) {
       global.currentLangChainSession = null;
-      console.log('🧹 Cleaned up global LangChain session');
+      console.log('🧹 Cleaned up global LangChain session (legacy)');
     }
     
     // Clean up STT connection properly

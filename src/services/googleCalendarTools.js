@@ -6,10 +6,12 @@ const { z } = require("zod");
 const calendarService = require('./googleCalendarService');
 const whatsappService = require('./whatsappService');
 const backgroundLogger = require('./backgroundLogger');
+const sessionManager = require('./sessionManager');
 
 class GoogleCalendarTools {
-  constructor() {
+  constructor(streamSid = null) {
     this.tools = [];
+    this.streamSid = streamSid;
     this.initializeTools();
   }
 
@@ -27,29 +29,33 @@ class GoogleCalendarTools {
           try {
             console.log('🔧 Tool: Checking calendar with real Google Calendar API...');
 
-            // Get caller info from global context (passed via workflow)
-            const callerInfo = global.currentCallerInfo || {
+            // Get caller info from session (isolated per caller)
+            const session = sessionManager.getSession(this.streamSid);
+            const callerInfo = session.callerInfo || {
               name: 'Customer',
               phoneNumber: '+1234567890',
               type: 'customer'
             };
 
-            // 🚀 PERFORMANCE OPTIMIZATION: Use preloaded data if available
+            // 🚀 PERFORMANCE OPTIMIZATION: Use session-specific preloaded data
             let appointments;
-            if (!forceRefresh && global.preloadedAppointments && global.calendarPreloadPromise) {
-              console.log('⚡ Using preloaded calendar data for instant response!');
-              appointments = global.preloadedAppointments;
+            if (!forceRefresh && session.preloadedAppointments && session.calendarPreloadPromise) {
+              console.log('⚡ Using session-specific preloaded calendar data for instant response!');
+              appointments = session.preloadedAppointments;
 
               // Continue loading fresh data in background for next requests
-              global.calendarPreloadPromise.then(freshData => {
-                global.preloadedAppointments = freshData;
-                console.log('🔄 Fresh calendar data loaded in background');
+              session.calendarPreloadPromise.then(freshData => {
+                sessionManager.setPreloadedAppointments(this.streamSid, freshData);
+                console.log('🔄 Fresh calendar data loaded in background for session');
               }).catch(error => {
                 console.warn('⚠️ Background calendar refresh failed:', error.message);
               });
             } else {
               // Fetch appointments from Google Calendar
               appointments = await calendarService.getAppointments(callerInfo, forceRefresh);
+              
+              // Cache in session
+              sessionManager.setPreloadedAppointments(this.streamSid, appointments);
             }
 
             if (appointments.length === 0) {
@@ -113,7 +119,8 @@ class GoogleCalendarTools {
           try {
             console.log(`🔧 Processing appointment: "${selection}", action: "${action}"`);
 
-            const callerInfo = global.currentCallerInfo || {
+            const session = sessionManager.getSession(this.streamSid);
+            const callerInfo = session.callerInfo || {
               name: 'Customer',
               phoneNumber: '+1234567890',
               type: 'customer'
@@ -301,7 +308,8 @@ class GoogleCalendarTools {
           };
 
           try {
-            const callerInfo = global.currentCallerInfo || {
+            const session = sessionManager.getSession(this.streamSid);
+            const callerInfo = session.callerInfo || {
               name: 'Customer',
               phoneNumber: '+1234567890',
               type: 'customer'
@@ -522,4 +530,14 @@ class GoogleCalendarTools {
   }
 }
 
-module.exports = new GoogleCalendarTools();
+// Export factory function for session-specific instances
+function createCalendarTools(streamSid) {
+  return new GoogleCalendarTools(streamSid);
+}
+
+// Export both class and factory
+module.exports = {
+  GoogleCalendarTools,
+  createCalendarTools,
+  getTools: (streamSid) => createCalendarTools(streamSid).getTools()
+};

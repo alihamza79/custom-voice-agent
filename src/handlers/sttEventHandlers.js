@@ -3,14 +3,18 @@ const { LiveTranscriptionEvents } = require("@deepgram/sdk");
 const { 
   shouldLogInterimTranscript, 
   shouldBroadcastInterimTranscript, 
-  isValidTranscript, 
-  shouldTriggerBargeIn 
+  isValidTranscript
 } = require('../utils/transcriptFilters');
 const { debouncedBroadcast } = require('../utils/transcriptCache');
 const sseService = require('../services/sseService');
 const azureTTSService = require('../services/azureTTSService');
 const deepgramSTTService = require('../services/deepgramSTTService');
+const sessionManager = require('../services/sessionManager');
+const { InterruptionManager, shouldTriggerAdvancedBargeIn } = require('../services/interruptionManager');
 const { globalTimingLogger } = require('../utils/timingLogger');
+
+// Initialize interruption manager
+const interruptionManager = new InterruptionManager();
 
 // Enhanced STT event listeners with better noise filtering and barge-in detection
 function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
@@ -104,21 +108,34 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
               debouncedBroadcast(mediaStream.streamSid, transcript, sseService.broadcast.bind(sseService));
             }
             
-            // Smarter barge-in detection
-            if (mediaStream.speaking && shouldTriggerBargeIn(transcript, confidence)) {
-              globalTimingLogger.logMoment('Barge-in detected - clearing audio playback');
+            // Enhanced barge-in detection with acknowledgment filtering
+            if (mediaStream.speaking) {
+              const session = sessionManager.getSession(mediaStream.streamSid);
+              const language = session.language || 'english';
               
-              // Stop Twilio audio playback
-              const messageJSON = JSON.stringify({
-                "event": "clear",
-                "streamSid": mediaStream.streamSid,
-              });
-              mediaStream.connection.sendUTF(messageJSON);
+              // Use advanced interruption system
+              const interruptionDecision = interruptionManager.shouldInterrupt(
+                transcript, 
+                confidence, 
+                language,
+                { speaking: true, sessionContext: session }
+              );
               
-              // Stop Azure TTS streaming synthesis
-              azureTTSService.cancelCurrentSynthesis();
-              
-              mediaStream.speaking = false;
+              if (interruptionDecision.shouldInterrupt) {
+                globalTimingLogger.logMoment(`Advanced barge-in detected (${interruptionDecision.reason}): "${transcript}"`);
+                
+                // Execute interruption based on level (async, don't await in callback)
+                interruptionManager.executeInterruption(
+                  mediaStream.streamSid,
+                  interruptionDecision,
+                  mediaStream,
+                  session.lastSystemResponse || ''
+                ).catch(error => {
+                  console.error('Error executing interruption:', error);
+                });
+              } else {
+                globalTimingLogger.logMoment(`Ignoring speech - ${interruptionDecision.reason}: "${transcript}"`);
+              }
             }
           } else {
             // Log filtered noise for debugging

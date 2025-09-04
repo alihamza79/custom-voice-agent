@@ -1,6 +1,7 @@
 // Utterance processing handler
 const azureTTSService = require('../services/azureTTSService');
 const sseService = require('../services/sseService');
+const sessionManager = require('../services/sessionManager');
 const { detectLanguage } = require('../utils/languageDetection');
 const { globalTimingLogger } = require('../utils/timingLogger');
 
@@ -31,16 +32,16 @@ async function processUtterance(utterance, mediaStream) {
       }
       
       // CRITICAL: Check if LangChain workflow is active FIRST
-      if (global.currentLangChainSession && 
-          global.currentLangChainSession.sessionActive && 
-          global.currentLangChainSession.streamSid === mediaStream.streamSid) {
+      const session = sessionManager.getSession(mediaStream.streamSid);
+      if (session.langChainSession && 
+          session.langChainSession.sessionActive) {
         
         globalTimingLogger.logMoment('Active LangChain workflow - processing with existing session');
         
         try {
           globalTimingLogger.startOperation('LangChain Continuation');
-          const workflowResult = await global.currentLangChainSession.handler.continueWorkflow(
-            global.currentLangChainSession.sessionId,
+          const workflowResult = await session.langChainSession.handler.continueWorkflow(
+            session.langChainSession.sessionId,
             utterance,
             mediaStream.streamSid
           );
@@ -65,7 +66,7 @@ async function processUtterance(utterance, mediaStream) {
           // End call if workflow completed
           if (workflowResult.endCall) {
             globalTimingLogger.logMoment('Ending call - LangChain workflow complete');
-            global.currentLangChainSession = null;
+            sessionManager.setLangChainSession(mediaStream.streamSid, null);
             
             setTimeout(() => {
               if (mediaStream.connection && !mediaStream.connection.closed) {
@@ -86,10 +87,10 @@ async function processUtterance(utterance, mediaStream) {
       // Set up immediate feedback mechanism for tools
       const immediateResponsePromise = new Promise((resolve) => {
         const timeoutId = setTimeout(() => resolve(null), 5000); // Increased timeout to 5 seconds
-        global.sendImmediateFeedback = (response) => {
+        sessionManager.setImmediateCallback(mediaStream.streamSid, (response) => {
           clearTimeout(timeoutId);
           resolve(response);
-        };
+        });
       });
       
       const [graphResult, immediateResponse] = await Promise.allSettled([
@@ -113,9 +114,7 @@ async function processUtterance(utterance, mediaStream) {
       
       // Clear callback after extended delay
       setTimeout(() => {
-        if (global.sendImmediateFeedback) {
-          global.sendImmediateFeedback = null;
-        }
+        sessionManager.setImmediateCallback(mediaStream.streamSid, null);
       }, 30000);
       
       const actualGraphResult = graphResult.status === 'fulfilled' ? graphResult.value : null;

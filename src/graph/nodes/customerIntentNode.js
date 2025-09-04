@@ -4,6 +4,7 @@ const OpenAI = require('openai');
 const appointmentHandler = require('../../workflows/AppointmentWorkflowHandler');
 const { globalTimingLogger } = require('../../utils/timingLogger');
 const calendarService = require('../../services/googleCalendarService');
+const sessionManager = require('../../services/sessionManager');
 
 const openai = new OpenAI();
 
@@ -52,10 +53,11 @@ const customerIntentNode = RunnableLambda.from(async (state) => {
   globalTimingLogger.logUserInput(state.transcript);
   
   // CRITICAL: Skip intent classification if already in active LangChain workflow
-  if (global.currentLangChainSession && global.currentLangChainSession.workflowActive) {
+  const session = sessionManager.getSession(state.streamSid);
+  if (session.langChainSession && session.langChainSession.workflowActive) {
     globalTimingLogger.logMoment('Bypassing intent - already in active LangChain workflow');
     
-    const callerInfo = {
+    const callerInfo = session.callerInfo || {
       name: state.callerInfo?.name || 'Customer',
       phoneNumber: state.phoneNumber,
       type: state.callerInfo?.type || 'customer',
@@ -225,24 +227,26 @@ Classify this into one of the 5 categories.`;
         email: state.callerInfo?.email || `${state.phoneNumber}@example.com`
       };
 
-      // Set global caller info for calendar tools to access
-      global.currentCallerInfo = callerInfo;
+      // Store caller info in session
+      sessionManager.setCallerInfo(state.streamSid, callerInfo);
 
-      // 🚀 PERFORMANCE OPTIMIZATION: Preload calendar data immediately
+      // 🚀 PERFORMANCE OPTIMIZATION: Preload calendar data immediately per session
       // Start fetching calendar data in background while processing workflow
-      if (!global.calendarPreloadPromise) {
+      if (!session.calendarPreloadPromise) {
         console.log('🚀 Preloading calendar data for faster response...');
-        global.calendarPreloadPromise = calendarService.getAppointments(callerInfo)
+        const preloadPromise = calendarService.getAppointments(callerInfo)
           .then(appointments => {
-            console.log(`📅 Preloaded ${appointments.length} appointments`);
-            global.preloadedAppointments = appointments;
+            console.log(`📅 Preloaded ${appointments.length} appointments for ${state.streamSid}`);
+            sessionManager.setPreloadedAppointments(state.streamSid, appointments);
             return appointments;
           })
           .catch(error => {
             console.warn('⚠️ Calendar preload failed:', error.message);
-            global.preloadedAppointments = [];
+            sessionManager.setPreloadedAppointments(state.streamSid, []);
             return [];
           });
+        
+        sessionManager.setPreloadedAppointments(state.streamSid, null, preloadPromise);
       }
 
       // INTELLIGENT GENERIC FILLER: Send appropriate filler based on intent
@@ -300,9 +304,9 @@ Classify this into one of the 5 categories.`;
       
       let immediateResponseSent = false;
       const immediateCallback = (response) => {
-        if (!immediateResponseSent && global.sendImmediateFeedback) {
+        if (!immediateResponseSent && session.immediateCallback) {
           globalTimingLogger.logMoment('LangChain immediate callback triggered');
-          global.sendImmediateFeedback(response);
+          session.immediateCallback(response);
           immediateResponseSent = true;
         } else {
           globalTimingLogger.logMoment('Cannot send immediate feedback - already sent or no callback');
@@ -336,16 +340,15 @@ Classify this into one of the 5 categories.`;
       // Only log and process workflowResult if it exists (try block succeeded)
       if (workflowResponse && workflowData) {
         globalTimingLogger.logMoment('Storing LangChain session for continued workflow handling');
-        global.currentLangChainSession = {
-          streamSid: state.streamSid,
+        sessionManager.setLangChainSession(state.streamSid, {
           sessionId: state.session_id,
           handler: appointmentHandler,
           sessionActive: true,
           workflowActive: true
-        };
+        });
       } else {
         globalTimingLogger.logMoment('No workflow result to process');
-        global.currentLangChainSession = null;
+        sessionManager.setLangChainSession(state.streamSid, null);
       }
       
     } else {

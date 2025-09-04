@@ -19,6 +19,7 @@ const azureTTSService = require('./services/azureTTSService');
 const deepgramSTTService = require('./services/deepgramSTTService');
 const whatsappService = require('./services/whatsappService');
 const dbManager = require('./services/databaseConnection');
+const sessionManager = require('./services/sessionManager');
 
 // Models
 const MediaStream = require('./models/MediaStream');
@@ -43,8 +44,9 @@ const mediaws = new WebSocketServer({
 // Twilio Token (for optional WebRTC testing)
 const twilio = require('twilio');
 
-// Global state management
-let currentMediaStream = null;
+// Global state management - DEPRECATED: Use sessionManager instead
+// These are kept for backward compatibility only
+let currentMediaStream = null; // TODO: Remove after migration complete
 let streamSid = '';
 
 // Function to handle HTTP requests
@@ -110,6 +112,9 @@ function handleTwiMLRequest(req, res) {
 function resetGlobalState() {
   currentMediaStream = null;
   streamSid = '';
+  
+  // Clean up session manager
+  sessionManager.shutdown();
   
   // Clean up Azure TTS
   azureTTSService.cleanup();
@@ -223,7 +228,12 @@ dispatcher.onPost("/twiml", function (req, res) {
 */
 mediaws.on("connect", function (connection) {
   const mediaStream = new MediaStream(connection);
-  currentMediaStream = mediaStream; // Set global currentMediaStream
+  
+  // LEGACY: Keep for backward compatibility
+  currentMediaStream = mediaStream;
+  
+  // NEW: Will register with sessionManager when streamSid is available
+  console.log('📞 New WebSocket connection established');
 });
 
 // Start the server
@@ -304,8 +314,14 @@ process.on('SIGTERM', () => {
 module.exports = {
   wsserver,
   resetGlobalState,
+  
+  // LEGACY: Backward compatibility functions
   getCurrentMediaStream: () => currentMediaStream,
   setCurrentMediaStream: (stream) => { currentMediaStream = stream; },
   getStreamSid: () => streamSid,
-  setStreamSid: (sid) => { streamSid = sid; }
+  setStreamSid: (sid) => { streamSid = sid; },
+  
+  // NEW: Session-based functions
+  getMediaStreamBySession: (streamSid) => sessionManager.getMediaStream(streamSid),
+  getSessionManager: () => sessionManager
 };

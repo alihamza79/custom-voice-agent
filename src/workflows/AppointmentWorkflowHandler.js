@@ -2,6 +2,7 @@
 // Optimized for minimum latency with proper memory management
 
 const LangChainAppointmentWorkflow = require('./shiftAppointmentWorkflow');
+const sessionManager = require('../services/sessionManager');
 
 class AppointmentWorkflowHandler {
   constructor() {
@@ -123,14 +124,15 @@ class AppointmentWorkflowHandler {
     
     try {
       // Create filler callback for fast continuation - send to TTS
+      const session = sessionManager.getSession(streamSid);
       const fillerCallback = (message) => {
         console.log(`🗣️  FAST FILLER: ${message}`);
-        // Send filler to TTS if global callback exists
-        if (global.sendImmediateFeedback) {
+        // Send filler to TTS if session callback exists
+        if (session.immediateCallback) {
           console.log(`📢 SENDING FILLER TO TTS: ${message}`);
-          global.sendImmediateFeedback(message); // No delay - immediate
+          session.immediateCallback(message); // No delay - immediate
         } else {
-          console.log('❌ No global.sendImmediateFeedback available for filler');
+          console.log('❌ No session immediate callback available for filler');
         }
       };
       
@@ -150,18 +152,16 @@ class AppointmentWorkflowHandler {
       console.log(`⚡ FAST WORKFLOW (${processingTime}ms): Continued existing conversation`);
       
       // Update session activity
-      const session = this.activeSessions.get(streamSid);
-      if (session) {
-        session.lastActivity = Date.now();
+      const activeSession = this.activeSessions.get(streamSid);
+      if (activeSession) {
+        activeSession.lastActivity = Date.now();
       }
       
       // Clean up if call ended
       if (result.endCall || result.sessionComplete) {
         this.endSession(streamSid);
-        // Clear global session tracker
-        if (global.currentLangChainSession) {
-          global.currentLangChainSession = null;
-        }
+        // Clear session tracker
+        sessionManager.setLangChainSession(streamSid, null);
       }
       
       return {
