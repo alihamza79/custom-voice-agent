@@ -20,7 +20,7 @@ class GoogleCalendarTools {
     this.tools.push(
       new DynamicStructuredTool({
         name: "check_calendar",
-        description: "ALWAYS use this FIRST when user wants to shift/cancel appointments. Shows all upcoming appointments for the caller with optimized performance.",
+        description: "Use this ONLY for the FIRST request to show user's appointments. Do NOT use this again if appointments were already shown in conversation history.",
         schema: z.object({
           action: z.string().optional().describe("The action user wants (shift/cancel/view)"),
           forceRefresh: z.boolean().optional().describe("Force refresh cache (default: false)")
@@ -94,12 +94,12 @@ class GoogleCalendarTools {
     this.tools.push(
       new DynamicStructuredTool({
         name: "process_appointment",
-        description: "Process user's appointment selection and execute shift/cancel actions with real calendar updates",
+        description: "IMMEDIATELY use this when user specifies BOTH an appointment (by name/number) AND an action (shift/cancel) AND optionally a new date/time. DO NOT ask for clarification if the appointment is clear from context.",
         schema: z.object({
-          selection: z.string().describe("User's selection (e.g., 'dental', 'first', '1', 'business meeting')"),
-          action: z.enum(["shift", "cancel"]).describe("Action to take"),
-          newDateTime: z.string().optional().describe("New date/time if shifting (ISO format or natural language)"),
-          newTime: z.string().optional().describe("New time if shifting (e.g., '2 PM tomorrow')")
+          selection: z.string().describe("Appointment identifier from user (e.g., 'business meeting', 'first', '1', 'doctor appointment', 'dental', partial names OK)"),
+          action: z.enum(["shift", "cancel"]).describe("Action: 'shift' for reschedule/move/change, 'cancel' for cancel/delete/remove"),
+          newDateTime: z.string().optional().describe("New date/time for shifting (e.g., '29 September', 'tomorrow 3 PM', 'next Monday', natural language OK)"),
+          newTime: z.string().optional().describe("Alternative new time field (e.g., '2 PM tomorrow', '10 AM next week')")
         }),
         func: async ({ selection, action, newDateTime, newTime }) => {
           const operationStartTime = Date.now();
@@ -426,97 +426,234 @@ class GoogleCalendarTools {
     );
   }
 
-  // Helper method to find appointment by user selection
+  // Enhanced appointment matching with fuzzy logic
   findAppointmentBySelection(selection, appointments) {
     if (!appointments || appointments.length === 0) return null;
 
     const searchTerm = selection.toLowerCase().trim();
+    console.log(`🔍 Finding appointment for selection: "${selection}" (${appointments.length} appointments available)`);
 
-    // Try to match by index first
+    // 1. Try to match by exact index first
     if (searchTerm.match(/^[1-9]$/)) {
       const index = parseInt(searchTerm) - 1;
       if (index >= 0 && index < appointments.length) {
+        console.log(`✅ Matched by index: ${index + 1} → ${appointments[index].summary}`);
         return appointments[index];
       }
     }
 
-    // Try to match by ordinal words
+    // 2. Try to match by ordinal words (first, second, etc.)
     const ordinalMap = {
-      'first': 0, '1st': 0,
-      'second': 1, '2nd': 1,
-      'third': 2, '3rd': 2,
-      'fourth': 3, '4th': 3,
-      'fifth': 4, '5th': 4
+      'first': 0, '1st': 0, 'one': 0,
+      'second': 1, '2nd': 1, 'two': 1,
+      'third': 2, '3rd': 2, 'three': 2,
+      'fourth': 3, '4th': 3, 'four': 3,
+      'fifth': 4, '5th': 4, 'five': 4
     };
 
-    if (ordinalMap[searchTerm] !== undefined) {
-      const index = ordinalMap[searchTerm];
-      if (index < appointments.length) {
+    for (const [key, index] of Object.entries(ordinalMap)) {
+      if (searchTerm.includes(key) && index < appointments.length) {
+        console.log(`✅ Matched by ordinal "${key}": ${index + 1} → ${appointments[index].summary}`);
         return appointments[index];
       }
     }
 
-    // Try to match by name/summary
-    for (const appointment of appointments) {
+    // 3. Smart partial name matching with multiple strategies
+    for (let i = 0; i < appointments.length; i++) {
+      const appointment = appointments[i];
       const summary = appointment.summary.toLowerCase();
-      if (summary.includes(searchTerm) ||
-          searchTerm.includes(summary.split(' ')[0])) {
+      
+      // Exact match
+      if (summary === searchTerm) {
+        console.log(`✅ Exact match: "${searchTerm}" → ${appointment.summary}`);
+        return appointment;
+      }
+      
+      // Contains full search term
+      if (summary.includes(searchTerm)) {
+        console.log(`✅ Summary contains selection: "${searchTerm}" in "${appointment.summary}"`);
+        return appointment;
+      }
+      
+      // Search term contains part of summary
+      if (searchTerm.includes(summary)) {
+        console.log(`✅ Selection contains summary: "${summary}" in "${searchTerm}"`);
+        return appointment;
+      }
+      
+      // Word-by-word matching for multi-word summaries
+      const summaryWords = summary.split(/\s+/);
+      const searchWords = searchTerm.split(/\s+/);
+      
+      const matchingWords = summaryWords.filter(word => 
+        searchWords.some(searchWord => 
+          word.includes(searchWord) || searchWord.includes(word)
+        )
+      );
+      
+      // If majority of words match, it's a match
+      if (matchingWords.length >= Math.max(1, summaryWords.length * 0.6)) {
+        console.log(`✅ Word matching: ${matchingWords.length}/${summaryWords.length} words match → ${appointment.summary}`);
         return appointment;
       }
     }
 
+    console.log(`❌ No appointment matched for: "${selection}"`);
     return null;
   }
 
-  // Helper method to parse natural language date/time
+  // Enhanced natural language date/time parser
   parseNewDateTime(dateTimeString, referenceDate = new Date()) {
     if (!dateTimeString) return null;
 
     const now = new Date();
-    const lowerInput = dateTimeString.toLowerCase();
+    const lowerInput = dateTimeString.toLowerCase().trim();
+    console.log(`🗓️ Parsing date/time: "${dateTimeString}"`);
 
     try {
-      // Handle common patterns
+      // Handle "tomorrow" patterns
       if (lowerInput.includes('tomorrow')) {
         const tomorrow = new Date(now);
         tomorrow.setDate(tomorrow.getDate() + 1);
-
-        if (lowerInput.includes('2') && lowerInput.includes('pm')) {
-          tomorrow.setHours(14, 0, 0, 0);
-        } else if (lowerInput.includes('10') && lowerInput.includes('am')) {
-          tomorrow.setHours(10, 0, 0, 0);
-        } else if (lowerInput.includes('3') && lowerInput.includes('pm')) {
-          tomorrow.setHours(15, 0, 0, 0);
-        }
-
+        
+        const time = this.extractTime(lowerInput, 9); // Default 9 AM
+        tomorrow.setHours(time.hour, time.minute, 0, 0);
+        console.log(`✅ Parsed tomorrow: ${tomorrow}`);
         return tomorrow;
       }
 
-      if (lowerInput.includes('next monday') || lowerInput.includes('next week')) {
-        const nextMonday = new Date(now);
-        const daysUntilMonday = (8 - now.getDay()) % 7 || 7;
-        nextMonday.setDate(now.getDate() + daysUntilMonday);
+      // Handle specific dates like "29 September", "September 29", etc.
+      const datePatterns = [
+        /(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)/i,
+        /(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})/i,
+        /(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i,
+        /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})/i
+      ];
 
-        if (lowerInput.includes('10') && lowerInput.includes('am')) {
-          nextMonday.setHours(10, 0, 0, 0);
-        } else {
-          nextMonday.setHours(9, 0, 0, 0); // Default to 9 AM
+      for (const pattern of datePatterns) {
+        const match = lowerInput.match(pattern);
+        if (match) {
+          let day, monthName;
+          
+          if (/^\d/.test(match[1])) {
+            // Pattern: "29 September"
+            day = parseInt(match[1]);
+            monthName = match[2];
+          } else {
+            // Pattern: "September 29"
+            day = parseInt(match[2]);
+            monthName = match[1];
+          }
+          
+          const monthMap = {
+            'january': 0, 'jan': 0, 'february': 1, 'feb': 1, 'march': 2, 'mar': 2,
+            'april': 3, 'apr': 3, 'may': 4, 'june': 5, 'jun': 5,
+            'july': 6, 'jul': 6, 'august': 7, 'aug': 7, 'september': 8, 'sep': 8,
+            'october': 9, 'oct': 9, 'november': 10, 'nov': 10, 'december': 11, 'dec': 11
+          };
+          
+          const monthIndex = monthMap[monthName.toLowerCase()];
+          if (monthIndex !== undefined && day >= 1 && day <= 31) {
+            const targetDate = new Date(now.getFullYear(), monthIndex, day);
+            
+            // If the date is in the past, assume next year
+            if (targetDate < now) {
+              targetDate.setFullYear(now.getFullYear() + 1);
+            }
+            
+            // Extract time or use reference time
+            const time = this.extractTime(lowerInput, referenceDate ? referenceDate.getHours() : 9);
+            targetDate.setHours(time.hour, time.minute, 0, 0);
+            
+            console.log(`✅ Parsed specific date: ${day} ${monthName} → ${targetDate}`);
+            return targetDate;
+          }
         }
-
-        return nextMonday;
       }
 
-      // Try to parse as ISO string
+      // Handle "next Monday", "next week" patterns
+      const dayPatterns = /next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i;
+      const dayMatch = lowerInput.match(dayPatterns);
+      if (dayMatch) {
+        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        const targetDay = dayNames.indexOf(dayMatch[1].toLowerCase());
+        
+        const nextDate = new Date(now);
+        const daysToAdd = (7 + targetDay - now.getDay()) % 7 || 7; // Next occurrence
+        nextDate.setDate(now.getDate() + daysToAdd);
+        
+        const time = this.extractTime(lowerInput, 9);
+        nextDate.setHours(time.hour, time.minute, 0, 0);
+        
+        console.log(`✅ Parsed next ${dayMatch[1]}: ${nextDate}`);
+        return nextDate;
+      }
+
+      // Handle "next week" 
+      if (lowerInput.includes('next week')) {
+        const nextWeek = new Date(now);
+        nextWeek.setDate(now.getDate() + 7);
+        
+        const time = this.extractTime(lowerInput, 9);
+        nextWeek.setHours(time.hour, time.minute, 0, 0);
+        
+        console.log(`✅ Parsed next week: ${nextWeek}`);
+        return nextWeek;
+      }
+
+      // Try to parse as ISO string or standard date
       const parsed = new Date(dateTimeString);
       if (!isNaN(parsed.getTime())) {
+        console.log(`✅ Parsed as standard date: ${parsed}`);
         return parsed;
       }
 
+      console.log(`❌ Could not parse date/time: "${dateTimeString}"`);
       return null;
+      
     } catch (error) {
       console.error('Error parsing date time:', error);
       return null;
     }
+  }
+
+  // Helper to extract time from natural language
+  extractTime(input, defaultHour = 9) {
+    const timePatterns = [
+      /(\d{1,2})\s*:?\s*(\d{0,2})\s*(am|pm)/i,
+      /(\d{1,2})\s+(am|pm)/i,
+      /(morning)/i,
+      /(afternoon)/i,
+      /(evening)/i
+    ];
+
+    for (const pattern of timePatterns) {
+      const match = input.match(pattern);
+      if (match) {
+        if (match[3] || match[2]) { // Has AM/PM
+          const hour = parseInt(match[1]);
+          const minute = match[2] ? parseInt(match[2]) : 0;
+          const ampm = match[3] || match[2];
+          
+          let adjustedHour = hour;
+          if (ampm.toLowerCase() === 'pm' && hour !== 12) {
+            adjustedHour += 12;
+          } else if (ampm.toLowerCase() === 'am' && hour === 12) {
+            adjustedHour = 0;
+          }
+          
+          return { hour: adjustedHour, minute };
+        }
+      }
+    }
+
+    // Handle general time references
+    if (input.includes('morning')) return { hour: 9, minute: 0 };
+    if (input.includes('afternoon')) return { hour: 14, minute: 0 };
+    if (input.includes('evening')) return { hour: 18, minute: 0 };
+
+    // Use reference date time or default
+    return { hour: defaultHour, minute: 0 };
   }
 
   // Fallback method for when calendar service fails
