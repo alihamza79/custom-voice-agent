@@ -20,7 +20,7 @@ class GoogleCalendarTools {
     this.tools.push(
       new DynamicStructuredTool({
         name: "check_calendar",
-        description: "Use this ONLY for the FIRST request to show user's appointments. Do NOT use this again if appointments were already shown in conversation history.",
+        description: "MANDATORY: Use this IMMEDIATELY when user asks about their meetings/appointments. Examples: 'which meetings I have', 'what appointments', 'show my schedule'.",
         schema: z.object({
           action: z.string().optional().describe("The action user wants (shift/cancel/view)"),
           forceRefresh: z.boolean().optional().describe("Force refresh cache (default: false)")
@@ -59,32 +59,48 @@ class GoogleCalendarTools {
             }
 
             if (appointments.length === 0) {
-              return "I don't see any upcoming appointments for you in the calendar. Would you like to schedule a new appointment?";
+              return JSON.stringify({
+                appointments: [],
+                message: "no_appointments_found",
+                count: 0
+              });
             }
 
-            // Format appointments for voice response
+            // Return structured data for LLM to process
             const appointmentsList = appointments.map((apt, i) => {
               const date = new Date(apt.start.dateTime);
-              const formattedDate = date.toLocaleDateString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-              });
-              const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              return {
+                position: i + 1,
+                id: apt.id,
+                summary: apt.summary,
+                date: date.toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
+                }),
+                time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                fullDateTime: date.toISOString()
+              };
+            });
 
-              return `${i + 1}. ${apt.summary} on ${formattedDate} at ${time}`;
-            }).join('. ');
-
-            const actionText = action === 'cancel' ? 'cancel' : action === 'shift' ? 'shift' : 'manage';
-
-            return `I found ${appointments.length} upcoming appointment${appointments.length > 1 ? 's' : ''} for you: ${appointmentsList}. Which appointment would you like to ${actionText}?`;
+            return JSON.stringify({
+              appointments: appointmentsList,
+              message: "appointments_found",
+              count: appointments.length,
+              requestedAction: action
+            });
 
           } catch (error) {
             console.error('❌ Calendar check failed:', error.message);
 
-            // Fallback to mock data if calendar fails
-            return this.getFallbackAppointments(action);
+            // Return error data for LLM to handle
+            return JSON.stringify({
+              appointments: [],
+              message: "calendar_error",
+              error: error.message,
+              count: 0
+            });
           }
         },
       })
@@ -94,14 +110,15 @@ class GoogleCalendarTools {
     this.tools.push(
       new DynamicStructuredTool({
         name: "process_appointment",
-        description: "IMMEDIATELY use this when user specifies BOTH an appointment (by name/number) AND an action (shift/cancel) AND optionally a new date/time. DO NOT ask for clarification if the appointment is clear from context.",
+        description: "MANDATORY: Use this IMMEDIATELY when user mentions ANY appointment/meeting + action word (shift/change/move/cancel/reschedule). Use ANY partial name user provides - don't ask for clarification! Examples: 'shift my meeting' = process_appointment(selection='meeting', action='shift'). 'change doctor appointment' = process_appointment(selection='doctor appointment', action='shift'). ALWAYS USE THIS TOOL!",
         schema: z.object({
           selection: z.string().describe("Appointment identifier from user (e.g., 'business meeting', 'first', '1', 'doctor appointment', 'dental', partial names OK)"),
           action: z.enum(["shift", "cancel"]).describe("Action: 'shift' for reschedule/move/change, 'cancel' for cancel/delete/remove"),
           newDateTime: z.string().optional().describe("New date/time for shifting (e.g., '29 September', 'tomorrow 3 PM', 'next Monday', natural language OK)"),
-          newTime: z.string().optional().describe("Alternative new time field (e.g., '2 PM tomorrow', '10 AM next week')")
+          newTime: z.string().optional().describe("Alternative new time field (e.g., '2 PM tomorrow', '10 AM next week')"),
+          contextFromPrevious: z.boolean().optional().describe("Set to true if using appointment/date info from previous conversation turns")
         }),
-        func: async ({ selection, action, newDateTime, newTime }) => {
+        func: async ({ selection, action, newDateTime, newTime, contextFromPrevious = false }) => {
           const operationStartTime = Date.now();
           let auditLogData = {
             sessionId: global.currentSessionId || `session_${Date.now()}`,
@@ -133,7 +150,12 @@ class GoogleCalendarTools {
             const selectedAppointment = this.findAppointmentBySelection(selection, appointments);
 
             if (!selectedAppointment) {
-              return `I couldn't find an appointment matching "${selection}". Please specify which appointment from your list.`;
+              return JSON.stringify({
+                success: false,
+                message: "appointment_not_found",
+                searchTerm: selection,
+                availableAppointments: appointments.length
+              });
             }
 
             auditLogData.appointmentId = selectedAppointment.id;
@@ -174,14 +196,84 @@ class GoogleCalendarTools {
               // Log to database (zero latency)
               await backgroundLogger.logAppointmentChange(auditLogData);
 
-              return `✅ Perfect! I've cancelled your ${appointmentName} appointment that was scheduled for ${appointmentDate.toLocaleDateString()}. You'll receive a confirmation notification shortly. Is there anything else I can help you with?`;
+              return JSON.stringify({
+                success: true,
+                action: "cancelled",
+                appointmentName: appointmentName,
+                originalDate: appointmentDate.toLocaleDateString(),
+                originalTime: appointmentDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                notificationSent: !!whatsappResult
+              });
 
             } else if (action === "shift") {
-              // Handle appointment shifting
-              const newDateTimeObj = this.parseNewDateTime(newDateTime || newTime, appointmentDate);
+                          // Handle appointment shifting - check for previous context
+            let combinedDateTime = newDateTime || newTime;
+            
+            // Get session for context memory
+            const session = sessionManager.getSession(this.streamSid);
+            const sessionData = session || {};
+            
+            // Combine current input with any stored context
+            if (sessionData.pendingAppointment) {
+              const pending = sessionData.pendingAppointment;
+              if (pending.appointmentName === appointmentName) {
+                // Same appointment - combine date/time info
+                const existingDate = pending.newDate;
+                const existingTime = pending.newTime;
+                
+                if (existingDate && !combinedDateTime) {
+                  combinedDateTime = existingDate;
+                } else if (existingTime && combinedDateTime && !combinedDateTime.includes(':') && !combinedDateTime.includes('am') && !combinedDateTime.includes('pm')) {
+                  combinedDateTime = `${combinedDateTime} ${existingTime}`;
+                } else if (existingDate && combinedDateTime && (combinedDateTime.includes(':') || combinedDateTime.includes('am') || combinedDateTime.includes('pm'))) {
+                  combinedDateTime = `${existingDate} ${combinedDateTime}`;
+                }
+              }
+            }
+            
+            const newDateTimeObj = this.parseNewDateTime(combinedDateTime, appointmentDate);
 
               if (!newDateTimeObj) {
-                return `I need a specific date and time to shift your appointment. Could you please tell me when you'd like to reschedule your ${appointmentName}?`;
+                // Store partial information for context
+                const partialInfo = {
+                  appointmentName: appointmentName,
+                  action: "shift",
+                  newDate: null,
+                  newTime: null
+                };
+                
+                // Parse what we have
+                const input = (newDateTime || newTime || '').toLowerCase();
+                if (input.includes('september') || input.includes('october') || input.includes('november') || 
+                    input.includes('december') || input.includes('january') || /\d{1,2}/.test(input)) {
+                  partialInfo.newDate = newDateTime || newTime;
+                }
+                if (input.includes('pm') || input.includes('am') || input.includes(':')) {
+                  partialInfo.newTime = newDateTime || newTime;
+                }
+                
+                // Store in session for next turn
+                sessionManager.updateSession(this.streamSid, { pendingAppointment: partialInfo });
+                
+                let missingInfo = 'date and time';
+                if (partialInfo.newDate && !partialInfo.newTime) {
+                  missingInfo = 'time';
+                } else if (partialInfo.newTime && !partialInfo.newDate) {
+                  missingInfo = 'date';
+                }
+                
+                return JSON.stringify({
+                  success: false,
+                  message: "need_date_time",
+                  appointmentName: appointmentName,
+                  originalDate: appointmentDate.toLocaleDateString(),
+                  originalTime: appointmentDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                  action: "shift",
+                  providedDateTime: newDateTime || newTime || "none",
+                  missingInfo: missingInfo,
+                  hasPartialDate: !!partialInfo.newDate,
+                  hasPartialTime: !!partialInfo.newTime
+                });
               }
 
               // Calculate end time (assuming same duration)
@@ -254,10 +346,23 @@ class GoogleCalendarTools {
               auditLogData.processingTime = Date.now() - operationStartTime;
               auditLogData.success = true;
 
+              // Clear any pending appointment context since we succeeded
+              sessionManager.updateSession(this.streamSid, { pendingAppointment: null });
+              
               // Log to database (zero latency)
               await backgroundLogger.logAppointmentChange(auditLogData);
 
-              return `✅ I've rescheduled your ${appointmentName} from ${appointmentDate.toLocaleDateString()} ${appointmentDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} to ${newDateTimeObj.toLocaleDateString()} ${newDateTimeObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}. ${target === 'teammate' ? 'Mike will contact you shortly to confirm.' : 'Our office will contact you to confirm.'} Is there anything else I can help you with?`;
+              return JSON.stringify({
+                success: true,
+                action: "shifted",
+                appointmentName: appointmentName,
+                originalDate: appointmentDate.toLocaleDateString(),
+                originalTime: appointmentDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                newDate: newDateTimeObj.toLocaleDateString(),
+                newTime: newDateTimeObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                notificationTarget: target,
+                notificationSent: !!whatsappResult
+              });
             }
 
           } catch (error) {
@@ -274,8 +379,12 @@ class GoogleCalendarTools {
 
             await backgroundLogger.logAppointmentChange(auditLogData);
 
-            // Provide helpful fallback
-            return `I'm having trouble processing your appointment request right now. Could you please try again or contact our office directly?`;
+            // Return error data for LLM to handle
+            return JSON.stringify({
+              success: false,
+              message: "processing_error",
+              error: error.message
+            });
           }
         },
       })
@@ -325,7 +434,11 @@ class GoogleCalendarTools {
                 timestamp: new Date()
               });
               await backgroundLogger.logAppointmentChange(auditLogData);
-              return "I couldn't understand the date and time. Please specify something like 'tomorrow at 2 PM' or 'next Monday at 10 AM'.";
+              return JSON.stringify({
+                success: false,
+                message: "date_parse_error",
+                providedDateTime: dateTime
+              });
             }
 
             const endDateTime = new Date(startDateTime.getTime() + duration * 60000);
@@ -391,7 +504,16 @@ class GoogleCalendarTools {
             // Log actual appointment data to database (zero latency)
             await backgroundLogger.logAppointmentChange(auditLogData);
 
-            return `✅ Great! I've scheduled your ${summary} for ${startDateTime.toLocaleDateString()} at ${startDateTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}. You'll receive a confirmation notification. Is there anything else I can help you with?`;
+            return JSON.stringify({
+              success: true,
+              action: "created",
+              appointmentName: summary,
+              appointmentId: result.id,
+              scheduledDate: startDateTime.toLocaleDateString(),
+              scheduledTime: startDateTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+              duration: duration,
+              notificationSent: !!whatsappResult
+            });
 
           } catch (error) {
             console.error('❌ Appointment creation failed:', error.message);
@@ -407,7 +529,11 @@ class GoogleCalendarTools {
 
             await backgroundLogger.logAppointmentChange(auditLogData);
 
-            return "I'm having trouble scheduling that appointment right now. Please try again or contact our office directly.";
+            return JSON.stringify({
+              success: false,
+              message: "creation_error",
+              error: error.message
+            });
           }
         },
       })
@@ -417,21 +543,47 @@ class GoogleCalendarTools {
     this.tools.push(
       new DynamicTool({
         name: "end_call",
-        description: "End the call when user says goodbye or has no more requests",
+        description: "MANDATORY: Use this when user indicates they're done. Examples: 'goodbye', 'thank you', 'that's all', 'I don't need anything', 'no thanks', or any ending phrase.",
         func: async () => {
           console.log('🔧 Ending call...');
-          return "Thank you for calling! Have a great day. Goodbye!";
+          return JSON.stringify({
+            success: true,
+            action: "end_call",
+            message: "goodbye",
+            shouldEndCall: true
+          });
         },
       })
     );
   }
 
-  // Enhanced appointment matching with fuzzy logic
+  // Enhanced appointment matching with fuzzy logic and transcription error handling
   findAppointmentBySelection(selection, appointments) {
     if (!appointments || appointments.length === 0) return null;
 
-    const searchTerm = selection.toLowerCase().trim();
+    let searchTerm = selection.toLowerCase().trim();
     console.log(`🔍 Finding appointment for selection: "${selection}" (${appointments.length} appointments available)`);
+    
+    // Handle common transcription errors and action word variations
+    const transcriptionFixes = {
+      // Action word fixes
+      'make it': 'shift',
+      'change it': 'shift',
+      'move it': 'shift',
+      'set it': 'shift',
+      
+      // Common transcription errors (be careful not to break good words)
+      'dell': 'dental',
+      'appoint': 'appointment'
+    };
+    
+    // Apply transcription fixes
+    for (const [error, correction] of Object.entries(transcriptionFixes)) {
+      if (searchTerm.includes(error)) {
+        searchTerm = searchTerm.replace(error, correction);
+        console.log(`🔄 Fixed transcription: "${selection}" → "${searchTerm}"`);
+      }
+    }
 
     // 1. Try to match by exact index first
     if (searchTerm.match(/^[1-9]$/)) {
@@ -458,7 +610,7 @@ class GoogleCalendarTools {
       }
     }
 
-    // 3. Smart partial name matching with multiple strategies
+    // 3. Smart partial name matching with fallback for generic terms
     for (let i = 0; i < appointments.length; i++) {
       const appointment = appointments[i];
       const summary = appointment.summary.toLowerCase();
@@ -481,20 +633,48 @@ class GoogleCalendarTools {
         return appointment;
       }
       
-      // Word-by-word matching for multi-word summaries
+      // Word-by-word matching
       const summaryWords = summary.split(/\s+/);
       const searchWords = searchTerm.split(/\s+/);
       
       const matchingWords = summaryWords.filter(word => 
         searchWords.some(searchWord => 
-          word.includes(searchWord) || searchWord.includes(word)
+          word.includes(searchWord) || searchWord.includes(word) || 
+          (searchWord.length > 3 && word.includes(searchWord.substring(0, 3))) ||
+          (word.length > 3 && searchWord.includes(word.substring(0, 3)))
         )
       );
       
-      // If majority of words match, it's a match
-      if (matchingWords.length >= Math.max(1, summaryWords.length * 0.6)) {
+      // If words match, it's a match
+      if (matchingWords.length >= Math.max(1, Math.ceil(summaryWords.length * 0.4))) {
         console.log(`✅ Word matching: ${matchingWords.length}/${summaryWords.length} words match → ${appointment.summary}`);
         return appointment;
+      }
+    }
+    
+    // FALLBACK: If user said generic "meeting" and we have appointments, return first one
+    if ((searchTerm === 'meeting' || searchTerm === 'appointment') && appointments.length > 0) {
+      console.log(`✅ Generic term "${searchTerm}" - returning first appointment: ${appointments[0].summary}`);
+      return appointments[0];
+    }
+    
+    // SMART MATCHING: Try partial word matching for common appointment types
+    const smartMatches = {
+      'dental': ['dental', 'dentist', 'checkup'],
+      'school': ['school', 'teacher', 'parent'],
+      'doctor': ['doctor', 'medical', 'clinic'],
+      'business': ['business', 'work', 'office']
+    };
+    
+    for (const [userTerm, keywords] of Object.entries(smartMatches)) {
+      if (searchTerm.includes(userTerm)) {
+        for (const appointment of appointments) {
+          const summary = appointment.summary.toLowerCase();
+          if (keywords.some(keyword => summary.includes(keyword))) {
+            console.log(`✅ Smart match: "${searchTerm}" → "${appointment.summary}" (matched keyword)`);
+            return appointment;
+          }
+        }
       }
     }
 
@@ -505,6 +685,12 @@ class GoogleCalendarTools {
   // Enhanced natural language date/time parser
   parseNewDateTime(dateTimeString, referenceDate = new Date()) {
     if (!dateTimeString) return null;
+    
+    // Handle context words that should be ignored
+    if (['later', 'may', 'could', 'should'].includes(dateTimeString.toLowerCase().trim())) {
+      console.log(`🗓️ Ignoring context word: "${dateTimeString}"`);
+      return null;
+    }
 
     const now = new Date();
     const lowerInput = dateTimeString.toLowerCase().trim();
@@ -612,7 +798,7 @@ class GoogleCalendarTools {
       return null;
       
     } catch (error) {
-      console.error('Error parsing date time:', error);
+      console.error('❌ Error parsing date time:', error);
       return null;
     }
   }

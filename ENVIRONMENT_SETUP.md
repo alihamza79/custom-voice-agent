@@ -51,6 +51,12 @@ OPENAI_MODEL=gpt-4o-mini
 # Language Settings
 DEFAULT_LANGUAGE=english
 SUPPORTED_LANGUAGES=english,hindi,german
+
+# LangSmith Debugging (Recommended for development)
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+LANGCHAIN_API_KEY=your_langsmith_api_key_here
+LANGCHAIN_PROJECT=voice-agent-workflow
 ```
 
 ## 🚀 Quick Setup
@@ -68,6 +74,11 @@ SUPPORTED_LANGUAGES=english,hindi,german
    AZURE_SPEECH_REGION=eastus
    TWILIO_ACCOUNT_SID=your_sid_here
    TWILIO_AUTH_TOKEN=your_token_here
+   
+   # For debugging LLM behavior (Optional but recommended for development)
+   LANGCHAIN_TRACING_V2=true
+   LANGCHAIN_API_KEY=your_langsmith_api_key_here
+   LANGCHAIN_PROJECT=voice-agent-workflow
    ```
 
 3. **Install dependencies**:
@@ -113,6 +124,13 @@ SUPPORTED_LANGUAGES=english,hindi,german
 - Enable Calendar API
 - Create OAuth 2.0 credentials
 - Generate refresh token using OAuth playground
+
+### 7. LangSmith (Optional - Debugging)
+- Sign up at https://smith.langchain.com/
+- Create a new project (e.g., "voice-agent-workflow")
+- Copy API key from settings
+- Set LANGCHAIN_TRACING_V2=true to enable tracing
+- View conversation traces and LLM calls in the LangSmith dashboard
 
 ## ✅ Verification
 

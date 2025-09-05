@@ -371,6 +371,12 @@ Classify this into one of the 5 categories.`;
       intent: classifiedIntent
     });
     
+    // Check if workflow indicates call should end
+    const shouldEndCall = workflowData?.shouldEndCall || 
+                         workflowData?.call_ended || 
+                         workflowResponse.toLowerCase().includes('goodbye') ||
+                         workflowResponse.toLowerCase().includes('have a great day');
+    
     const result = {
       ...state,
       intent: classifiedIntent,
@@ -378,11 +384,12 @@ Classify this into one of the 5 categories.`;
       systemPrompt: workflowResponse,
       workflowData: workflowData,
       workflowCompleted: classifiedIntent !== 'no_intent_detected',
-      call_ended: false,
+      call_ended: shouldEndCall,
       conversation_history: conversation_history,
       last_system_response: workflowResponse,
       turn_count: (state.turn_count || 0) + 1,
-      conversation_state: classifiedIntent === 'shift_cancel_appointment' ? 'workflow' : 'active',
+      conversation_state: shouldEndCall ? 'ended' : 
+                         (classifiedIntent === 'shift_cancel_appointment' ? 'workflow' : 'active'),
       session_initialized: true
     };
     

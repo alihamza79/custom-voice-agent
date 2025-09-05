@@ -1,6 +1,11 @@
 // LangChain-Based Appointment Workflow with Memory and Tool Calling
 // Fixed version with proper workflow handling
 
+// Enable LangSmith tracing for debugging (set LANGCHAIN_TRACING_V2=true)
+if (process.env.LANGCHAIN_TRACING_V2 === 'true') {
+  console.log('🔍 LangSmith tracing enabled for debugging');
+}
+
 const { ChatOpenAI } = require("@langchain/openai");
 const { BufferMemory } = require("langchain/memory");
 const { DynamicTool, DynamicStructuredTool } = require("@langchain/core/tools");
@@ -12,7 +17,7 @@ const { google } = require('googleapis');
 const { MongoClient } = require('mongodb');
 const twilio = require('twilio');
 const calendarService = require('../services/googleCalendarService');
-const { getTools: getCalendarTools } = require('../services/googleCalendarTools');
+const { getTools: getCalendarTools } = require('../services/simpleCalendarTools');
 const sessionManager = require('../services/sessionManager');
 
 class LangChainAppointmentWorkflow {
@@ -29,13 +34,20 @@ class LangChainAppointmentWorkflow {
   async initializeSession(sessionId, callerInfo, language = 'english', initialIntent = null) {
     console.log(`🧠 Initializing LangChain session: ${sessionId}`);
     
-    // Create LLM instance optimized for low latency
+    // Create LLM instance optimized for natural conversations
     const llm = new ChatOpenAI({
       modelName: "gpt-4o",
-      temperature: 0.3,
-      streaming: false, // Disable streaming for more reliable tool usage
-      maxTokens: 150,
+      temperature: 0.5, // Lower temperature for more focused responses
+      streaming: false,
+      maxTokens: 300, // Reasonable limit for phone conversations
       topP: 0.9,
+      // LangSmith configuration for debugging
+      tags: [`session-${sessionId}`, 'appointment-workflow'],
+      metadata: {
+        caller: callerInfo.name,
+        phone: callerInfo.phoneNumber,
+        language: language
+      }
     });
 
     // Use BufferMemory for more reliable memory management
@@ -61,59 +73,95 @@ Current context:
     // Create tools for the agent
     const tools = await this.createTools(sessionId, callerInfo);
 
-    // Get actual appointments for dynamic prompt
+    // Get actual appointments and working memory for dynamic prompt
     const session = sessionManager.getSession(sessionId.replace('session_', ''));
     let appointmentContext = '';
     if (session.preloadedAppointments && session.preloadedAppointments.length > 0) {
       const appointmentList = session.preloadedAppointments.map((apt, i) => {
         const date = new Date(apt.start.dateTime);
-        return `${i + 1}. "${apt.summary}" (${date.toDateString()} at ${date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})})`;
+        return `${i + 1}. "${apt.summary}" (ID: ${apt.id}) - ${date.toDateString()} at ${date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
       }).join('\n');
       appointmentContext = `\n\nCURRENT APPOINTMENTS FOR ${callerInfo.name}:\n${appointmentList}`;
     }
 
-    // Create human-like conversation prompt
-    const prompt = ChatPromptTemplate.fromMessages([
-      new SystemMessage(`You are a helpful and friendly appointment assistant helping ${callerInfo.name}.
+    // Get working memory context
+    let workingMemoryContext = '';
+    if (session.workingMemory && Object.keys(session.workingMemory).length > 0) {
+      const memory = session.workingMemory;
+      workingMemoryContext = `\n\n🧠 CONVERSATION CONTEXT (what user already told you):`;
+      if (memory.meetingName) workingMemoryContext += `\n- Meeting they want to change: ${memory.meetingName}`;
+      if (memory.action) workingMemoryContext += `\n- What they want to do: ${memory.action}`;
+      if (memory.newDate) workingMemoryContext += `\n- New date they mentioned: ${memory.newDate}`;
+      if (memory.newTime) workingMemoryContext += `\n- New time they mentioned: ${memory.newTime}`;
+      if (memory.notes) workingMemoryContext += `\n- Additional context: ${memory.notes}`;
+      workingMemoryContext += `\n\n⚠️ DO NOT ask for information already provided above!`;
+    }
 
-🎯 YOUR MISSION: Be conversational, remember what's been discussed, and help with appointments naturally.
+    // Natural conversation prompt - let GPT-4o be intelligent
+    const prompt = ChatPromptTemplate.fromMessages([
+      new SystemMessage(`You are a helpful appointment assistant for ${callerInfo.name}.
+
+🎯 YOUR ROLE: Help ${callerInfo.name} manage their appointments naturally through conversation.
+
+🛠️ AVAILABLE TOOLS:
+1. get_meetings - Get all their upcoming meetings
+2. update_meeting - Update a specific meeting (shift/cancel)
+3. end_call - End the conversation
 
 💬 CONVERSATION STYLE:
-- Talk like a helpful human, not a robot
-- Remember what the user already told you - NEVER ask for information already provided
-- Be proactive and intelligent - if user mentions "business meeting", you know which one they mean
-- Use phrases like "Got it", "Perfect", "I understand", "Let me help with that"
-- When user gives you both appointment name AND new date/time, process it immediately
+- Be natural and conversational like a human assistant
+- Use your chat history to remember what was discussed
+- Ask clarifying questions if needed
+- Don't be robotic or follow rigid patterns
 
-🏃‍♂️ INTELLIGENT WORKFLOW:
-1. FIRST conversation → Use check_calendar to show appointments
-2. IMMEDIATELY when user mentions appointment name + action + date/time → Use process_appointment (DO NOT ask for clarification!)
-3. IMMEDIATELY when user mentions appointment name + action → Use process_appointment (ask for date/time within the tool if needed)
-4. If user just says "the first one" or "business meeting" after seeing list → Use process_appointment with their previous action intent
+🧠 CRITICAL CONVERSATION RULES:
+- ALWAYS read the FULL chat history before responding
+- If user mentions a specific meeting name, ACKNOWLEDGE it immediately
+- Don't ask for information the user already provided
+- Progress the conversation forward, don't repeat questions
+- EXTRACT INFO FROM ANY GRAMMAR: "could be", "should be", "would be" - ALL MEAN THE SAME THING
+- Don't be picky about perfect English - users may not be native speakers
 
-⚡ CRITICAL EXAMPLES:
-- "I want to shift business meeting to 29 September" → IMMEDIATELY use process_appointment(selection="business meeting", action="shift", newDateTime="29 September")
-- "Cancel my doctor appointment" → IMMEDIATELY use process_appointment(selection="doctor appointment", action="cancel")
-- "Move the first appointment to tomorrow" → IMMEDIATELY use process_appointment(selection="first", action="shift", newDateTime="tomorrow")
-- "Reschedule business meeting" → IMMEDIATELY use process_appointment(selection="business meeting", action="shift") and ask for date in tool if needed
+WORKFLOW - SMART PROGRESSION:
+1. User wants to shift meeting → use get_meetings to show options
+2. When user mentions ANY meeting name (dental, school, etc.) → ACCEPT IT and ask for date/time
+3. Collect missing info step by step: date first, then time
+4. 🔥 CRITICAL: When you have meeting name + date + time → IMMEDIATELY call update_meeting tool - DO NOT ask for confirmation!
+5. If they say goodbye → use end_call
 
-📅 SMART MATCHING:
-- "business meeting" matches "Business Meeting" ✅
-- "doctor" matches "Doctor Appointment" ✅  
-- "dental" matches any appointment with "dental/dentist" ✅
-- "first", "second" matches by position ✅
-- Partial names are perfectly fine - be intelligent about matching!
+⚠️ TOOL CALLING RULES:
+- If user says "1PM" or "2 PM" etc. → CALL update_meeting immediately
+- Don't say "there was an issue" - CALL THE TOOL!
+- Don't ask for confirmation when you have all info - EXECUTE!
 
-🧠 MEMORY RULES:
-- Remember appointments already shown to user
-- Remember user's language preferences
-- Remember what action they want (shift/cancel)
-- Don't repeat questions unnecessarily
-- Build on previous conversation naturally${appointmentContext}
+CONVERSATION INTELLIGENCE:
+- If user says "dental" or "dental checkup" → they mean "Dental Checkup Meeting"
+- If user says "school" or "teacher meeting" → they mean "School Parent Teacher Meeting"  
+- Don't keep asking "which meeting" if they already told you
+- MOVE FORWARD in the conversation, don't go backwards
+
+📝 EXTRACT INFO FROM ANY PHRASING:
+- "could be 22 September" = September 22
+- "should be 2PM" = 2:00 PM  
+- "would be tomorrow" = tomorrow
+- "maybe 3 o'clock" = 3:00 PM
+- Accept ANY way user provides date/time - don't ask for rephrasing!
+
+EXAMPLE FLOW:
+User: "I want to shift my meeting"
+You: use get_meetings → "You have Dental Checkup and School Meeting. Which one?"
+User: "I want to shift dental checkup"  
+You: "Perfect! What date would you like to move your Dental Checkup Meeting to?"
+User: "September 25"
+You: "What time on September 25?"
+User: "2 PM"  
+You: call update_meeting(meetingName="Dental Checkup Meeting", newDateTime="September 25, 2025 at 2:00 PM", action="shift")
+
+${appointmentContext}${workingMemoryContext}
 
 Language: ${language === 'hindi' ? 'Respond in Hinglish (mix Hindi-English)' : language === 'german' ? 'Respond in German' : 'Respond in English'}
 
-🤝 BE HUMAN: Talk naturally, remember context, and help efficiently!`),
+Be conversational and intelligent! 🤖✨`),
       new MessagesPlaceholder("chat_history"),
       new HumanMessage("{input}"),
       new MessagesPlaceholder("agent_scratchpad"),
@@ -126,13 +174,13 @@ Language: ${language === 'hindi' ? 'Respond in Hinglish (mix Hindi-English)' : l
       prompt,
     });
 
-    // Create agent executor with better configuration
+    // Create agent executor with natural conversation settings
     const agentExecutor = new AgentExecutor({
       agent,
       tools,
       memory,
-      verbose: false, // Enable for debugging
-      maxIterations: 3, // Limit iterations to prevent loops
+      verbose: process.env.LANGCHAIN_VERBOSE === 'true',
+      maxIterations: 3, // Reasonable limit for phone conversations
       handleParsingErrors: true,
       returnIntermediateSteps: true,
       earlyStoppingMethod: "generate",
@@ -145,6 +193,7 @@ Language: ${language === 'hindi' ? 'Respond in Hinglish (mix Hindi-English)' : l
       callerInfo,
       language,
       tools,
+      llm, // Store LLM reference for prompt updates
       appointments: [],
       currentState: 'initial',
       workflowStep: 1,
@@ -200,24 +249,69 @@ Language: ${language === 'hindi' ? 'Respond in Hinglish (mix Hindi-English)' : l
         sendFillerCallback("Let me check your appointments...");
       }
       
+      // Let LLM handle conversation flow naturally - no auto-parsing needed
+      
       // Process through agent with proper input format
       const result = await session.executor.invoke({
         input: userInput,
       });
       
       const processingTime = Date.now() - startTime;
-      console.log(`🤖 Response (${processingTime}ms):`, result.output);
       
-      // Save to memory asynchronously
-      session.memory.saveContext(
-        { input: userInput },
-        { output: result.output }
-      ).catch(err => console.error('Memory save error:', err));
+      // Debug tool calling
+      console.log(`🔍 DEBUG - Tools called: ${result.intermediateSteps?.length || 0}`);
+      if (result.intermediateSteps && result.intermediateSteps.length > 0) {
+        result.intermediateSteps.forEach((step, i) => {
+          console.log(`🛠️ Tool ${i+1}: ${step.action?.tool} with input:`, step.action?.toolInput);
+          console.log(`📤 Tool ${i+1} output:`, step.observation);
+        });
+      }
+      
+      // Detect if this is a fallback response
+      const isFallback = result.output.toLowerCase().includes('could you please specify') || 
+                        result.output.toLowerCase().includes('it seems like there was a mix-up') ||
+                        result.output.toLowerCase().includes('let me know which one') ||
+                        result.output.toLowerCase().includes('which meeting would you like') ||
+                        result.output.toLowerCase().includes('there was an issue');
+      
+      if (isFallback) {
+        console.log(`🚨 FALLBACK DETECTED (${processingTime}ms): ${result.output}`);
+      } else {
+        console.log(`🤖 LLM Response (${processingTime}ms):`, result.output);
+      }
+      
+      // Save to memory with proper Human/AI formatting
+      try {
+        await session.memory.saveContext(
+          { input: `Human: ${userInput}` },
+          { output: `AI: ${result.output}` }
+        );
+        console.log('💾 Conversation saved to memory with Human/AI tags');
+        
+        // Debug: Show current memory state
+        const memoryMessages = await session.memory.chatHistory.getMessages();
+        console.log(`🧠 Memory now has ${memoryMessages.length} messages`);
+        if (memoryMessages.length > 0) {
+          const lastMessage = memoryMessages[memoryMessages.length - 1];
+          console.log(`🧠 Last message type: ${lastMessage.constructor.name}, content: "${lastMessage.content.substring(0, 100)}..."`);
+        }
+      } catch (err) {
+        console.error('❌ Memory save error:', err);
+      }
+      
+      // Check if LLM used end_call tool or said goodbye
+      const shouldEndCall = result.intermediateSteps?.some(step => 
+                              step.action?.tool === 'end_call'
+                            ) || 
+                           (result.output.toLowerCase().includes('thank you') && 
+                            (result.output.toLowerCase().includes('goodbye') || 
+                             result.output.toLowerCase().includes('great day') ||
+                             result.output.toLowerCase().includes('have a great')));
       
       return {
         response: result.output,
-        endCall: session.currentState === 'ended',
-        sessionComplete: session.workflowStep === 4,
+        endCall: shouldEndCall || session.currentState === 'ended',
+        sessionComplete: shouldEndCall || session.workflowStep === 4,
         processingTime,
         sessionId,
       };
@@ -244,6 +338,103 @@ Language: ${language === 'hindi' ? 'Respond in Hinglish (mix Hindi-English)' : l
       type: 'customer',
       email: 'customer@example.com',
     };
+  }
+
+  // Add working memory context to LangChain memory
+  async addWorkingMemoryToLangChain(sessionId, streamSid) {
+    try {
+      const langChainSession = this.sessions.get(sessionId);
+      const sessionData = sessionManager.getSession(streamSid);
+      
+      if (!langChainSession || !sessionData || !sessionData.workingMemory) return;
+
+      const memory = sessionData.workingMemory;
+      let contextMessage = '';
+
+      // Build context message from working memory
+      if (memory.meetingName) contextMessage += `Meeting to change: ${memory.meetingName}. `;
+      if (memory.action) contextMessage += `Action requested: ${memory.action}. `;
+      if (memory.newDate) contextMessage += `New date mentioned: ${memory.newDate}. `;
+      if (memory.newTime) contextMessage += `New time mentioned: ${memory.newTime}. `;
+
+      if (contextMessage) {
+        // Add working memory context to LangChain's memory
+        await langChainSession.memory.saveContext(
+          { input: "[WORKING_MEMORY_UPDATE]" },
+          { output: `Context: ${contextMessage.trim()}` }
+        );
+        console.log('🧠 Added working memory to LangChain memory:', contextMessage.trim());
+      }
+
+    } catch (error) {
+      console.error('❌ Error adding working memory to LangChain:', error.message);
+    }
+  }
+
+  // Update working memory automatically based on user input
+  updateWorkingMemoryFromInput(userInput, streamSid) {
+    const session = sessionManager.getSession(streamSid);
+    if (!session) return;
+
+    const input = userInput.toLowerCase();
+    const workingMemory = session.workingMemory || {};
+    let updated = false;
+
+    // Detect meeting names
+    if (input.includes('dental')) {
+      workingMemory.meetingName = 'Dental Checkup Meeting';
+      updated = true;
+    } else if (input.includes('school') || input.includes('teacher')) {
+      workingMemory.meetingName = 'School Parent Teacher Meeting';
+      updated = true;
+    }
+
+    // Detect actions
+    if (input.includes('shift') || input.includes('reschedule') || input.includes('move') || input.includes('change')) {
+      workingMemory.action = 'shift';
+      updated = true;
+    } else if (input.includes('cancel') || input.includes('delete')) {
+      workingMemory.action = 'cancel';
+      updated = true;
+    }
+
+    // Detect dates
+    const datePatterns = [
+      /(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)/i,
+      /(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})/i,
+      /(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i,
+      /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})/i
+    ];
+
+    for (const pattern of datePatterns) {
+      const match = input.match(pattern);
+      if (match) {
+        workingMemory.newDate = match[0];
+        updated = true;
+        break;
+      }
+    }
+
+    // Detect times
+    const timePatterns = [
+      /(\d{1,2})\s*(am|pm)/i,
+      /(\d{1,2}):(\d{2})\s*(am|pm)?/i,
+      /(\d{1,2})\s*o'?clock/i
+    ];
+
+    for (const pattern of timePatterns) {
+      const match = input.match(pattern);
+      if (match) {
+        workingMemory.newTime = match[0];
+        updated = true;
+        break;
+      }
+    }
+
+    if (updated) {
+      sessionManager.updateSession(streamSid, { workingMemory });
+      console.log('🧠 Auto-updated working memory:', workingMemory);
+    }
   }
 
   // Clear session

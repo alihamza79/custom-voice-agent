@@ -161,6 +161,40 @@ function isValidTranscript(transcript, confidence = 0) {
     return false;
   }
   
+  // ENHANCED: Filter incomplete sentences that are likely still being spoken
+  const incompletePatterns = [
+    /\b(i|my|the|to|on|at|in|with|and|but|or)$/i, // Ends with common incomplete words
+    /\b(want|like|need|have|going|trying|thinking)$/i, // Ends with action words that usually continue
+    /\b(shift|change|move|cancel|reschedule|update)$/i, // Ends with appointment action words
+    /\b(meeting|appointment|checkup|visit)$/i, // Ends with appointment nouns that usually need more context
+    /\b(september|october|november|december|january|february|march|april|may|june|july|august)\s*$/i, // Ends with month name
+    /\b(\d{1,2}|first|second|third|next|this|that)\s*$/i, // Ends with numbers or ordinals
+  ];
+  
+  for (const pattern of incompletePatterns) {
+    if (pattern.test(cleanTranscript)) {
+      console.log(`STT: Filtered incomplete sentence: "${transcript}"`);
+      return false;
+    }
+  }
+  
+  // Must have at least 3 real words for a complete thought (unless it's very specific like "yes" or "no")
+  const shortValidResponses = ['yes', 'no', 'okay', 'ok', 'sure', 'thanks', 'thank you', 'goodbye', 'bye', 'hello', 'hi'];
+  
+  // ALLOW TIME RESPONSES: Add time patterns as valid short responses
+  const timePatterns = [
+    /^\d{1,2}\s*(am|pm)$/i,           // "1PM", "12 AM"
+    /^\d{1,2}:\d{2}\s*(am|pm)?$/i,   // "1:30", "1:30 PM"
+    /^\d{1,2}\s*o'?clock$/i          // "1 o'clock", "1 oclock"
+  ];
+  
+  const isTimeResponse = timePatterns.some(pattern => pattern.test(cleanTranscript));
+  
+  if (realWords.length < 3 && !shortValidResponses.includes(cleanTranscript) && !isTimeResponse) {
+    console.log(`STT: Filtered too short for complete thought: "${transcript}" (${realWords.length} words)`);
+    return false;
+  }
+  
   return true;
 }
 

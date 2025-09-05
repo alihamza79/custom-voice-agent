@@ -35,7 +35,7 @@ class DeepgramSTTService {
       const deepgram = this.client.listen.live({
         // Model - Enhanced model for better accuracy
         model: "nova-3",
-        language: "multi", // Use multi-language for best compatibility
+        language: "en", // Use multi-language for best compatibility
         smart_format: true,
         
         // Enhanced accuracy settings
@@ -44,17 +44,18 @@ class DeepgramSTTService {
         redact: false,
         diarize: false,
         
+        
         // Audio settings - optimized for Twilio μ-law
         encoding: "mulaw",
         sample_rate: 8000,
         channels: 1,
         multichannel: false,
         
-        // ENHANCED: Better speech detection settings
+        // ENHANCED: Better speech detection settings for natural conversation
         no_delay: true,
         interim_results: true,
-        endpointing: 300, // Increased from 100ms - wait longer before processing
-        utterance_end_ms: 1000, // Increased from 1000ms - longer silence before finalizing
+        endpointing: 300, // Slightly increased for better speech detection
+        utterance_end_ms: 2000, // Increased to 2 seconds - wait longer for complete thoughts
         vad_events: true, // Enable Voice Activity Detection events
         
         // ENHANCED: Noise filtering
@@ -62,8 +63,8 @@ class DeepgramSTTService {
         profanity_filter: false,
         redact: false,
         
-        // ENHANCED: Quality thresholds
-        confidence: 0.6, // Only process transcripts with 60%+ confidence
+        // ENHANCED: Quality thresholds  
+        confidence: 0.5, // Reduced threshold for better capture
         
         // Connection settings
         keep_alive: true,
@@ -76,15 +77,7 @@ class DeepgramSTTService {
         // Search terms for meeting context (helps with accuracy)
         search: ["meeting", "appointment", "schedule", "time", "date", "hour", "minute"],
         
-        // Word replacements for consistency
-        replace: {
-          "2pm": "2 PM",
-          "2am": "2 AM", 
-          "10am": "10 AM",
-          "10pm": "10 PM",
-          "tomorrow": "tomorrow",
-          "today": "today"
-        }
+       
       }, "wss://api.deepgram.com/v1/listen");
       
       // Track connection cleanup with unique ID

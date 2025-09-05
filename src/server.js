@@ -88,7 +88,6 @@ function handleTwiMLRequest(req, res) {
     
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8" ?>
 <Response>
-  <Say>Please hold, connecting you now.</Say>
   <Connect>
     <Stream url="${WEBSOCKET_URL}">
       <Parameter name="callerNumber" value="${callerNumber}" />
@@ -204,7 +203,6 @@ dispatcher.onPost("/twiml", function (req, res) {
   
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8" ?>
 <Response>
-  <Say>Please hold, connecting you now.</Say>
   <Connect>
     <Stream url="${WEBSOCKET_URL}">
       <Parameter name="callerNumber" value="${callerNumber}" />

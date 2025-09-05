@@ -52,6 +52,9 @@ class SessionManager {
       conversationHistory: [],
       lastSystemResponse: '',
       
+      // Working memory for conversation context
+      workingMemory: {},
+      
       // Workflow state
       currentWorkflow: null,
       workflowInstances: new Map(), // workflowName → instance
@@ -120,6 +123,14 @@ class SessionManager {
       session.calendarPreloadPromise = promise;
     }
     console.log(`📅 Set preloaded appointments for ${streamSid}: ${appointments?.length || 0} appointments`);
+  }
+  
+  // Update session with partial data
+  updateSession(streamSid, updates) {
+    const session = this.getSession(streamSid);
+    Object.assign(session, updates);
+    this.touchSession(streamSid);
+    console.log(`🔄 Updated session ${streamSid} with:`, Object.keys(updates));
   }
   
   // Schedule session cleanup

@@ -159,9 +159,21 @@ class AppointmentWorkflowHandler {
       
       // Clean up if call ended
       if (result.endCall || result.sessionComplete) {
+        console.log('🚪 Call ending requested by LLM');
         this.endSession(streamSid);
         // Clear session tracker
         sessionManager.setLangChainSession(streamSid, null);
+        
+        // Signal to close the Twilio connection
+        const session = sessionManager.getSession(streamSid);
+        if (session && session.mediaStream) {
+          setTimeout(() => {
+            console.log('📞 Closing Twilio connection after goodbye');
+            if (session.mediaStream.connection && !session.mediaStream.connection.closed) {
+              session.mediaStream.connection.close();
+            }
+          }, 3000); // Give TTS time to complete
+        }
       }
       
       return {
