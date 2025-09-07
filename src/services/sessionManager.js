@@ -122,7 +122,7 @@ class SessionManager {
     if (promise) {
       session.calendarPreloadPromise = promise;
     }
-    console.log(`📅 Set preloaded appointments for ${streamSid}: ${appointments?.length || 0} appointments`);
+    // console.log(`📅 Set preloaded appointments for ${streamSid}: ${appointments?.length || 0} appointments`);
   }
   
   // Update session with partial data

@@ -348,10 +348,10 @@ function getSimpleResponse(utterance, callerInfo, language = 'english') {
   // Language-specific responses
   const responses = {
     english: {
-      greeting: "Hello! I'm here to help you. What can I assist you with today?",
+      greeting: "Hi! I'm here to help you. What can I assist you with today?",
       yes: "Great! How can I help you today?",
       thanks: "You're welcome! Is there anything else I can help you with?",
-      default: "I'm here to help. Could you please tell me what you need assistance with?"
+      default: "I'm here to help. What do you need assistance with?"
     },
     german: {
       greeting: "Hallo! Ich bin hier, um Ihnen zu helfen. Womit kann ich Ihnen heute behilflich sein?",

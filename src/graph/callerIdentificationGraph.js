@@ -111,7 +111,7 @@ async function runCallerIdentificationGraph(input) {
     
     // Fallback response
     return { 
-      systemPrompt: "Hello! Thank you for calling. How can I assist you today?",
+      systemPrompt: "Hi! How can I assist you today?",
       greeting_sent: true,
       call_ended: false
     };

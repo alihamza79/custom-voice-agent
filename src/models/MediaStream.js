@@ -182,7 +182,7 @@ class MediaStream {
         globalTimingLogger.logError(error, 'Immediate Greeting');
         
         // Fallback greeting
-        const fallbackGreeting = `Hello! Thank you for calling. How can I assist you today?`;
+        const fallbackGreeting = `Hi! How can I assist you today?`;
         globalTimingLogger.logModelOutput(fallbackGreeting, 'FALLBACK GREETING');
         
         globalTimingLogger.startOperation('Fallback Greeting TTS');
@@ -255,9 +255,9 @@ class MediaStream {
           }
           
           // CRITICAL FIX: Send greeting immediately when call starts
-          setTimeout(() => {
+          // setTimeout(() => {
             this.sendImmediateGreeting();
-          }, 500); // Small delay to ensure connections are ready
+          // }, 500); // Small delay to ensure connections are ready
         }
         
         this.resetGlobalState();

@@ -5,6 +5,7 @@ const { SPEECH_KEY, SPEECH_REGION } = require('../config/environment');
 const sseService = require('./sseService');
 const { getAzureTTSConfig } = require('../utils/languageDetection');
 const { globalTimingLogger } = require('../utils/timingLogger');
+const performanceLogger = require('../utils/performanceLogger');
 
 class AzureTTSService {
   constructor() {
@@ -60,6 +61,9 @@ class AzureTTSService {
 
   // NEW: Real-time Azure TTS Streaming Function with minimal latency and multi-language support
   async synthesizeStreaming(text, mediaStream, language = 'english', retries = 3) {
+    // Start TTS timing
+    performanceLogger.startTiming(mediaStream.streamSid, 'tts');
+    
     if (!this.synthesizer || !this.isReady) {
       if (retries > 0) {
         setTimeout(() => {
@@ -170,6 +174,7 @@ class AzureTTSService {
           (result) => {
             // This callback is for final completion, streaming happens in synthesizing event
             console.log('Azure TTS: Final synthesis callback completed');
+            performanceLogger.endTiming(mediaStream.streamSid, 'tts');
             this.currentSynthesisRequest = null;
           },
           (error) => {

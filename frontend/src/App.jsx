@@ -458,7 +458,28 @@ function App() {
       setWebrtcError('');
       const { token } = await fetchVoiceToken(baseUrl);
       const { Device } = await import('@twilio/voice-sdk');
-      const dev = new Device(token, { logLevel: 'error' });
+      const dev = new Device(token, { 
+        logLevel: 'error',
+        allowIncomingWhileBusy: false,
+        // don't want any voice in starting of call, so we'll mute it
+        // let's keep ringing, call progress, and mute
+        audio: {
+          enableRinging: false,
+          // let's enable it for testing
+          enableCallProgress: false,
+          muted: true,
+          mutedInRemoteAudioDetect: false,
+          // let's enable it for testing
+          mutedInRemoteAudioDetectSuppress: false,
+          mutedInRemoteAudioDetectSuppressDuration: 0,
+          mutedInRemoteAudioDetectSuppressDuration: 0,
+          // mute starting tone anyways
+          mutedInLocalAudioDetect: true,
+          mutedInLocalAudioDetectSuppress: false,
+          mutedInLocalAudioDetectSuppressDuration: 0,
+          mutedInLocalAudioDetectSuppressDuration: 0,
+        }
+       });
       await dev.register();
       setDevice(dev);
       return dev;

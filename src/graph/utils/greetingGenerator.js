@@ -21,12 +21,12 @@ async function generatePersonalizedGreeting(callerInfo, phoneNumber, language = 
     
     if (callerInfo) {
       // Known caller
-      systemPrompt = `You are a professional voice assistant. A caller has just connected and you need to greet them warmly and personally. Keep the greeting brief, friendly, and professional. ${languageInstruction}.`;
+      systemPrompt = `You are a professional voice assistant. A caller has just connected and you need to greet them warmly and personally. Keep the greeting brief, friendly, and professional. Prefer using "Hi" over "Hello" when addressing callers by name. ${languageInstruction}.`;
       
       userPrompt = `Generate a personalized greeting for ${callerInfo.name} who is calling. Their role/relationship is: ${callerInfo.type}. 
       
       Guidelines:
-      - Keep it brief (1-2 sentences max)
+      - Keep it brief (1 sentence max)
       - Be warm and welcoming
       - Use their name
       - Adjust tone based on their relationship type:
@@ -35,29 +35,31 @@ async function generatePersonalizedGreeting(callerInfo, phoneNumber, language = 
         * teammate: Friendly and collaborative
       - End by asking how you can help them
       - Do NOT mention the phone number
+      - Do NOT add extra pleasantries like "It's a pleasure to hear from you"
       - ${languageInstruction}
       
       Examples for English:
-      - "Hello John! Great to hear from you. How can I assist you today?"
-      - "Good day Sarah! I'm ready to help. What can I do for you?"
-      - "Hi Mike! Hope you're doing well. How can I help you today?"`;
+      - "Hi John! How can I assist you today?"
+      - "Hi Dimitri! How can I help you today?"
+      - "Hi Mike! How can I help you today?"`;
       
     } else {
       // Unknown caller
-      systemPrompt = `You are a professional voice assistant. An unknown caller has just connected and you need to provide a friendly, professional greeting. ${languageInstruction}.`;
+      systemPrompt = `You are a professional voice assistant. An unknown caller has just connected and you need to provide a friendly, professional greeting. Prefer using "Hi" over "Hello" for a more casual, friendly tone. ${languageInstruction}.`;
       
       userPrompt = `Generate a professional greeting for an unknown caller from phone number ${phoneNumber}.
       
       Guidelines:
-      - Keep it brief (1-2 sentences max)
+      - Keep it brief (1 sentence max)
       - Be polite and professional
       - Welcome them warmly
       - Ask how you can help them
       - Do NOT mention that they are unknown or unrecognized
+      - Do NOT add extra pleasantries like "Welcome, and thank you for calling"
       - ${languageInstruction}
       
       Example for English:
-      - "Hello! Welcome, and thank you for calling. How can I assist you today?"`;
+      - "Hi! How can I assist you today?"`;
     }
     
     // SPEED OPTIMIZED: Parallel processing + reduced tokens for sub-2sec latency
@@ -93,8 +95,8 @@ async function generatePersonalizedGreeting(callerInfo, phoneNumber, language = 
 function getImmediateGreeting(callerInfo, language = 'english') {
   const greetings = {
     english: {
-      known: callerInfo ? `Hi ${callerInfo.name}! How can I help you today?` : "Hi..! Thank you for calling. How can I assist you today?",
-      unknown: "Hello! Welcome, and thank you for calling. How can I assist you today?"
+      known: callerInfo ? `Hi ${callerInfo.name}! How can I assist you today?` : "Hi! How can I assist you today?",
+      unknown: "Hi! How can I assist you today?"
     },
     german: {
       known: callerInfo ? `Hallo ${callerInfo.name}! Wie kann ich Ihnen heute helfen?` : "Hallo! Vielen Dank für Ihren Anruf. Wie kann ich Ihnen helfen?",

@@ -3,6 +3,7 @@
 
 const LangChainAppointmentWorkflow = require('./shiftAppointmentWorkflow');
 const sessionManager = require('../services/sessionManager');
+const performanceLogger = require('../utils/performanceLogger');
 
 class AppointmentWorkflowHandler {
   constructor() {
@@ -120,36 +121,131 @@ class AppointmentWorkflowHandler {
   // Continue existing workflow without intent classification overhead  
   async continueWorkflow(sessionId, transcript, streamSid) {
     const startTime = Date.now();
-    console.log(`🚀 FAST CONTINUE: Bypassing intent classification for session ${sessionId}`);
+    // console.log(`🚀 FAST CONTINUE: Bypassing intent classification for session ${sessionId}`);
     
     try {
-      // Create filler callback for fast continuation - send to TTS
+      // Start timing workflow execution
+      performanceLogger.startTiming(streamSid, 'workflow');
+      
+      // Create contextual filler callback for fast continuation
       const session = sessionManager.getSession(streamSid);
+      
       const fillerCallback = (message) => {
-        console.log(`🗣️  FAST FILLER: ${message}`);
-        // Send filler to TTS if session callback exists
-        if (session.immediateCallback) {
-          console.log(`📢 SENDING FILLER TO TTS: ${message}`);
-          session.immediateCallback(message); // No delay - immediate
+        // Check if filler was already sent by intent classification
+        const session = sessionManager.getSession(streamSid);
+        if (session && session.fillerAlreadySent) {
+          console.log(`🔇 SKIPPING DUPLICATE FILLER: "${message}" (already sent by intent classification)`);
+          return;
+        }
+        
+        // Generate contextual filler based on transcript
+        let contextualFiller = message;
+        
+        // Enhanced contextual filler matching
+        if (transcript.toLowerCase().includes('shift') || transcript.toLowerCase().includes('change') || transcript.toLowerCase().includes('delay') || transcript.toLowerCase().includes('move') || transcript.toLowerCase().includes('ship')) {
+          const fillers = [
+            "Processing that appointment change",
+            "Updating your meeting",
+            "Making that shift", 
+            "Processing that request",
+            "Working on that change",
+            "Adjusting your schedule",
+            "Making that adjustment",
+            "Processing the shift",
+            "Handling that request",
+            "Getting that sorted"
+          ];
+          contextualFiller = fillers[Math.floor(Math.random() * fillers.length)];
+        } else if (transcript.toLowerCase().includes('confirm') || transcript.toLowerCase().includes('yes') || transcript.toLowerCase().includes('correct') || transcript.toLowerCase().includes('proceed') || transcript.toLowerCase().includes('sounds good')) {
+          const fillers = [
+            "Confirming that change",
+            "Processing your confirmation",
+            "Making that update",
+            "Processing that",
+            "Executing that change",
+            "Finalizing the update",
+            "Making it happen",
+            "Completing that request",
+            "Getting that done",
+            "Processing your approval"
+          ];
+          contextualFiller = fillers[Math.floor(Math.random() * fillers.length)];
+        } else if (transcript.toLowerCase().includes('dental') || transcript.toLowerCase().includes('school') || transcript.toLowerCase().includes('meeting') || transcript.toLowerCase().includes('appointment')) {
+          const fillers = [
+            "Checking that appointment",
+            "Looking at that meeting",
+            "One moment",
+            "Reviewing your schedule",
+            "Checking your calendar",
+            "Looking into that",
+            "Accessing that information",
+            "Pulling up those details",
+            "Getting that info",
+            "Checking that for you"
+          ];
+          contextualFiller = fillers[Math.floor(Math.random() * fillers.length)];
+        } else if (transcript.toLowerCase().includes('time') || transcript.toLowerCase().includes('same') || transcript.toLowerCase().includes('remain')) {
+          const fillers = [
+            "Got it about the time",
+            "Understanding your timing",
+            "Processing the time details",
+            "Working with that timing",
+            "Noting the time preference",
+            "Handling the time aspect"
+          ];
+          contextualFiller = fillers[Math.floor(Math.random() * fillers.length)];
         } else {
-          console.log('❌ No session immediate callback available for filler');
+          // General fillers for any other context
+          const fillers = [
+            "One moment please",
+            "Let me handle that",
+            "Processing your request",
+            "Working on that",
+            "Give me a second",
+            "Looking into that",
+            "Taking care of that",
+            "On it",
+            "Let me check that",
+            "Processing that for you"
+          ];
+          contextualFiller = fillers[Math.floor(Math.random() * fillers.length)];
+        }
+        
+        // Send filler to TTS if session callback exists
+        if (session && session.immediateCallback) {
+          console.log(`💬 FILLER: "${contextualFiller}"`);
+          console.log(`🔧 FILLER DEBUG: Callback exists, sending to TTS`);
+          session.immediateCallback(contextualFiller);
+        } else {
+          console.log(`❌ FILLER DEBUG: No session callback for filler: "${contextualFiller}"`);
+          console.log(`🔧 FILLER DEBUG: Session exists: ${!!session}, Callback exists: ${!!(session?.immediateCallback)}`);
         }
       };
       
       // CRITICAL: Ensure session exists in AppointmentWorkflowHandler
       const actualSessionId = `session_${streamSid}`;
-      console.log(`🔍 FAST CONTINUE: Looking for session ${actualSessionId} (mapped from ${sessionId})`);
+      // console.log(`🔍 FAST CONTINUE: Looking for session ${actualSessionId} (mapped from ${sessionId})`);
       
       // Direct processing through existing LangChain session (no initialization needed)
       const result = await this.langchainWorkflow.processUserInput(
         actualSessionId, // Use the properly mapped session ID
         transcript,
         streamSid,
-        fillerCallback
+        fillerCallback // Pass the filler callback properly
       );
       
+      // End timing and log performance
+      performanceLogger.endTiming(streamSid, 'workflow');
+      performanceLogger.logPerformanceMetrics(streamSid);
+      
       const processingTime = Date.now() - startTime;
-      console.log(`⚡ FAST WORKFLOW (${processingTime}ms): Continued existing conversation`);
+      const responseLength = result?.response?.length || 0;
+      console.log(`⚡ WORKFLOW COMPLETED (${processingTime}ms): ${responseLength} chars`);
+      
+      // Reset filler flag for subsequent turns
+      if (session) {
+        session.fillerAlreadySent = false;
+      }
       
       // Update session activity
       const activeSession = this.activeSessions.get(streamSid);
@@ -180,7 +276,7 @@ class AppointmentWorkflowHandler {
         response: result.response,
         endCall: result.endCall || false,
         sessionComplete: result.sessionComplete || false,
-        processingTime
+        processingTime: processingTime
       };
       
     } catch (error) {

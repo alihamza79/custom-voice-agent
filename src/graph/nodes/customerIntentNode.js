@@ -3,6 +3,7 @@ const { RunnableLambda } = require("@langchain/core/runnables");
 const OpenAI = require('openai');
 const appointmentHandler = require('../../workflows/AppointmentWorkflowHandler');
 const { globalTimingLogger } = require('../../utils/timingLogger');
+const performanceLogger = require('../../utils/performanceLogger');
 const calendarService = require('../../services/googleCalendarService');
 const sessionManager = require('../../services/sessionManager');
 
@@ -12,14 +13,14 @@ const openai = new OpenAI();
 function generateWorkflowResponse(intent, transcript, language) {
   const responses = {
     english: {
-      shift_cancel_appointment: "I'll be happy to help you with your appointment. Let me check your current bookings and see what options we have available.",
+      shift_cancel_appointment: "Let me check your appointments and show you what's available.",
       invoicing_question: "I can help you with your billing inquiry. Let me look up your account information.",
       appointment_info: "I'll get your appointment details for you right away. Let me check our system.",
       additional_demands: "I understand you have additional requests. Let me see how we can accommodate that.",
       no_intent_detected: "Thank you for your response! How can I assist you today?"
     },
     hindi: {
-      shift_cancel_appointment: "Main aapki appointment ke saath madad karunga. Main aapke current bookings check karta hun.",
+      shift_cancel_appointment: "Main aapke appointments check karta hun aur dikhata hun kya available hai.",
       invoicing_question: "Main aapke billing inquiry mein madad kar sakta hun. Main aapka account information dekh raha hun.",
       appointment_info: "Main aapke appointment details abhi check karta hun. Main hamara system dekh raha hun.",
       additional_demands: "Main samajh gaya aapke additional requests hain. Main dekh raha hun kaise accommodate kar sakte hain.",
@@ -33,7 +34,7 @@ function generateWorkflowResponse(intent, transcript, language) {
       no_intent_detected: "Thank you for response! Aaj main aapki kaise help kar sakta hun?"
     },
     german: {
-      shift_cancel_appointment: "Gerne helfe ich Ihnen mit Ihrem Termin. Lassen Sie mich Ihre aktuellen Buchungen überprüfen.",
+      shift_cancel_appointment: "Lassen Sie mich Ihre Termine überprüfen und Ihnen zeigen, was verfügbar ist.",
       invoicing_question: "Ich kann Ihnen bei Ihrer Rechnungsanfrage helfen. Ich schaue mir Ihre Kontoinformationen an.",
       appointment_info: "Ich hole sofort Ihre Termindetails für Sie. Lassen Sie mich unser System überprüfen.",
       additional_demands: "Ich verstehe, Sie haben zusätzliche Wünsche. Lassen Sie mich sehen, wie wir das ermöglichen können.",
@@ -53,8 +54,24 @@ const customerIntentNode = RunnableLambda.from(async (state) => {
   globalTimingLogger.logUserInput(state.transcript);
   
   // CRITICAL: Skip intent classification if already in active LangChain workflow
-  const session = sessionManager.getSession(state.streamSid);
-  if (session.langChainSession && session.langChainSession.workflowActive) {
+  let session = sessionManager.getSession(state.streamSid);
+  
+  // Create session if it doesn't exist
+  if (!session) {
+    console.log('🆕 Creating session for intent classification');
+    sessionManager.createSession(state.streamSid);
+    session = sessionManager.getSession(state.streamSid);
+    console.log('🔍 Session after creation:', session ? 'EXISTS' : 'NULL');
+    
+    // Set caller info after session creation
+    if (session && state.callerInfo) {
+      sessionManager.setCallerInfo(state.streamSid, state.callerInfo);
+    }
+  } else {
+    console.log('✅ Session already exists for intent classification');
+  }
+  
+  if (session && session.langChainSession && session.langChainSession.workflowActive) {
     globalTimingLogger.logMoment('Bypassing intent - already in active LangChain workflow');
     
     const callerInfo = session.callerInfo || {
@@ -201,8 +218,14 @@ Classify this into one of the 5 categories.`;
       }
     }
     
-    // Log intent classification
-    globalTimingLogger.logIntentClassification(classifiedIntent);
+  // Log intent classification
+  globalTimingLogger.logIntentClassification(classifiedIntent);
+  
+  // Log user input
+  performanceLogger.logUserInput(state.streamSid, state.transcript);
+  
+  // Start timing for LLM processing
+  performanceLogger.startTiming(state.streamSid, 'llm');
     
     const intentLog = {
       timestamp: new Date().toISOString(),
@@ -232,7 +255,7 @@ Classify this into one of the 5 categories.`;
 
       // 🚀 PERFORMANCE OPTIMIZATION: Preload calendar data immediately per session
       // Start fetching calendar data in background while processing workflow
-      if (!session.calendarPreloadPromise) {
+      if (session && !session.calendarPreloadPromise) {
         console.log('🚀 Preloading calendar data for faster response...');
         const preloadPromise = calendarService.getAppointments(callerInfo)
           .then(appointments => {
@@ -250,20 +273,77 @@ Classify this into one of the 5 categories.`;
       }
 
       // INTELLIGENT GENERIC FILLER: Send appropriate filler based on intent
+      // Context-based humanistic filler words
       let immediateResponse;
       if (classifiedIntent === 'shift_cancel_appointment') {
-        immediateResponse = "Ok, let me check your appointments...";
+        const fillers = [
+          "Let me pull up your appointments",
+          "Checking your schedule",
+          "Let me see what appointments you have",
+          "Accessing your calendar",
+          "Looking at your upcoming meetings",
+          "Reviewing your schedule",
+          "Getting your appointment details",
+          "Checking what you have planned",
+          "Looking up your meetings",
+          "Fetching your calendar info"
+        ];
+        immediateResponse = fillers[Math.floor(Math.random() * fillers.length)];
       } else if (classifiedIntent.includes('check') || classifiedIntent.includes('find') || classifiedIntent.includes('search')) {
-        immediateResponse = "Ok, let me check...";
+        const fillers = [
+          "Let me check that for you",
+          "Looking that up",
+          "Searching our records",
+          "Finding that information",
+          "Checking our system",
+          "Looking into that",
+          "Searching for that",
+          "Getting that info",
+          "Checking the details",
+          "Looking that up for you"
+        ];
+        immediateResponse = fillers[Math.floor(Math.random() * fillers.length)];
       } else if (classifiedIntent.includes('book') || classifiedIntent.includes('schedule') || classifiedIntent.includes('create')) {
-        immediateResponse = "Ok, let me process that...";
+        const fillers = [
+          "Let me set that up for you",
+          "Processing your booking",
+          "Getting that scheduled",
+          "Setting up that appointment",
+          "Creating that booking",
+          "Arranging that for you",
+          "Processing that request",
+          "Getting that organized",
+          "Setting that up",
+          "Making that reservation"
+        ];
+        immediateResponse = fillers[Math.floor(Math.random() * fillers.length)];
       } else {
-        immediateResponse = "Ok, let me help you...";
+        const fillers = [
+          "Let me help you with that",
+          "One moment",
+          "Let me assist you",
+          "I'm here to help",
+          "Processing your request",
+          "Working on that",
+          "Let me handle that",
+          "I'll take care of that",
+          "Looking into that",
+          "Give me just a moment",
+          "Processing that for you",
+          "Let me see what I can do"
+        ];
+        immediateResponse = fillers[Math.floor(Math.random() * fillers.length)];
       }
       console.log('⚡ Sending intelligent generic filler while processing workflow...');
       
       // SPEAK GENERIC FILLER IMMEDIATELY - PARALLEL TO LangChain workflow
       globalTimingLogger.logFillerWord(immediateResponse);
+      
+      // Set a flag to prevent duplicate fillers in workflow
+      const currentSession = sessionManager.getSession(state.streamSid);
+      if (currentSession) {
+        currentSession.fillerAlreadySent = true;
+      }
       
       // Start filler speaking in parallel (don't await it)
       const fillerPromise = (async () => {
@@ -302,10 +382,16 @@ Classify this into one of the 5 categories.`;
       // Small delay to ensure filler starts first
       await new Promise(resolve => setTimeout(resolve, 50));
       
+      // CRITICAL: Set the immediate callback in session for filler words
+      if (!session || !session.immediateCallback) {
+        console.log('❌ No session immediate callback - filler words will not work');
+      }
+      
       let immediateResponseSent = false;
       const immediateCallback = (response) => {
-        if (!immediateResponseSent && session.immediateCallback) {
+        if (!immediateResponseSent && session && session.immediateCallback) {
           globalTimingLogger.logMoment('LangChain immediate callback triggered');
+          performanceLogger.logFillerWord(state.streamSid, response);
           session.immediateCallback(response);
           immediateResponseSent = true;
         } else {
@@ -327,6 +413,9 @@ Classify this into one of the 5 categories.`;
         globalTimingLogger.endOperation('LangChain Workflow');
         
         globalTimingLogger.logModelOutput(workflowResult.systemPrompt, 'WORKFLOW RESPONSE');
+        performanceLogger.logModelOutput(state.streamSid, workflowResult.systemPrompt);
+        performanceLogger.endTiming(state.streamSid, 'llm');
+        performanceLogger.startTiming(state.streamSid, 'workflow');
         workflowResponse = workflowResult.systemPrompt;
         workflowData = workflowResult.workflowData;
       } catch (error) {

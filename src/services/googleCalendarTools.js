@@ -29,33 +29,76 @@ class GoogleCalendarTools {
           try {
             console.log('🔧 Tool: Checking calendar with real Google Calendar API...');
 
-            // Get caller info from session (isolated per caller)
+            // Send filler word during calendar check
             const session = sessionManager.getSession(this.streamSid);
+            if (session && session.immediateCallback) {
+              const calendarFillers = [
+                "Let me check your calendar",
+                "Pulling up your schedule", 
+                "Looking at your appointments",
+                "Getting your meetings",
+                "Accessing your calendar",
+                "Reviewing your schedule",
+                "Checking what you have planned",
+                "Looking up your appointments",
+                "Getting your calendar details",
+                "Fetching your schedule",
+                "Checking your upcoming meetings",
+                "Reviewing what's on your calendar",
+                "Pulling up your appointment list",
+                "Getting your meeting details",
+                "Looking at your schedule",
+                "Retrieving your appointments",
+                "Checking your calendar entries",
+                "Gathering your meeting info"
+              ];
+              const filler = calendarFillers[Math.floor(Math.random() * calendarFillers.length)];
+              console.log(`💬 CALENDAR FILLER: "${filler}"`);
+              session.immediateCallback(filler);
+            }
+
+            // Get caller info from session (isolated per caller)
+            if (!session) {
+              console.log('❌ No session found, creating fallback session');
+              sessionManager.createSession(this.streamSid, {
+                callerInfo: { name: 'Customer', phoneNumber: '+1234567890', type: 'customer' }
+              });
+            }
             const callerInfo = session.callerInfo || {
               name: 'Customer',
               phoneNumber: '+1234567890',
               type: 'customer'
             };
 
-            // 🚀 PERFORMANCE OPTIMIZATION: Use session-specific preloaded data
+            // 🚀 PERFORMANCE OPTIMIZATION: Smart caching with timestamp validation
             let appointments;
-            if (!forceRefresh && session.preloadedAppointments && session.calendarPreloadPromise) {
-              console.log('⚡ Using session-specific preloaded calendar data for instant response!');
+            const now = Date.now();
+            const cacheTimeout = 5 * 60 * 1000; // 5 minutes cache
+            
+            if (!forceRefresh && session.preloadedAppointments && session.cacheTimestamp && 
+                (now - session.cacheTimestamp) < cacheTimeout) {
+              console.log('⚡ Using cached calendar data (age: ' + Math.round((now - session.cacheTimestamp) / 1000) + 's)');
               appointments = session.preloadedAppointments;
-
-              // Continue loading fresh data in background for next requests
-              session.calendarPreloadPromise.then(freshData => {
-                sessionManager.setPreloadedAppointments(this.streamSid, freshData);
-                console.log('🔄 Fresh calendar data loaded in background for session');
-              }).catch(error => {
-                console.warn('⚠️ Background calendar refresh failed:', error.message);
-              });
             } else {
+              console.log('📅 Fetching fresh calendar data...');
+              const startTime = Date.now();
+              
+              // Start timing tool calling
+              const performanceLogger = require('../utils/performanceLogger');
+              performanceLogger.startTiming(this.streamSid, 'toolCalling');
+              
               // Fetch appointments from Google Calendar
               appointments = await calendarService.getAppointments(callerInfo, forceRefresh);
               
-              // Cache in session
+              // End timing
+              performanceLogger.endTiming(this.streamSid, 'toolCalling');
+              
+              const fetchTime = Date.now() - startTime;
+              console.log(`📅 Calendar fetch completed in ${fetchTime}ms`);
+              
+              // Cache in session with timestamp
               sessionManager.setPreloadedAppointments(this.streamSid, appointments);
+              session.cacheTimestamp = now;
             }
 
             if (appointments.length === 0) {
@@ -110,7 +153,7 @@ class GoogleCalendarTools {
     this.tools.push(
       new DynamicStructuredTool({
         name: "process_appointment",
-        description: "MANDATORY: Use this IMMEDIATELY when user mentions ANY appointment/meeting + action word (shift/change/move/cancel/reschedule). Use ANY partial name user provides - don't ask for clarification! Examples: 'shift my meeting' = process_appointment(selection='meeting', action='shift'). 'change doctor appointment' = process_appointment(selection='doctor appointment', action='shift'). ALWAYS USE THIS TOOL!",
+        description: "CRITICAL: ONLY use this tool AFTER user has CONFIRMED the change! NEVER use if user says 'No', 'Wait', 'Change', or 'Stop'. Only use when user explicitly says 'Yes', 'Confirm', 'Okay', or 'Sure' to a confirmation question. Examples: User says 'Yes, confirm the change' = process_appointment(selection='meeting', action='shift'). User says 'No, I want to change the time' = DO NOT USE THIS TOOL! Ask what they want to change instead.",
         schema: z.object({
           selection: z.string().describe("Appointment identifier from user (e.g., 'business meeting', 'first', '1', 'doctor appointment', 'dental', partial names OK)"),
           action: z.enum(["shift", "cancel"]).describe("Action: 'shift' for reschedule/move/change, 'cancel' for cancel/delete/remove"),
@@ -120,6 +163,37 @@ class GoogleCalendarTools {
         }),
         func: async ({ selection, action, newDateTime, newTime, contextFromPrevious = false }) => {
           const operationStartTime = Date.now();
+          
+          // Send filler word during tool execution
+          const session = sessionManager.getSession(this.streamSid);
+          if (session && session.immediateCallback) {
+            const toolFillers = [
+              "Hold on",
+              "Processing that",
+              "Making the change",
+              "Updating now",
+              "One moment",
+              "Working on that update",
+              "Making that adjustment",
+              "Processing your request",
+              "Updating your appointment",
+              "Making the modification",
+              "Executing that change",
+              "Finalizing the update",
+              "Adjusting your schedule",
+              "Processing the modification",
+              "Making it happen",
+              "Getting that sorted",
+              "Handling that request",
+              "Completing the update",
+              "Making the adjustment",
+              "Processing that change"
+            ];
+            const filler = toolFillers[Math.floor(Math.random() * toolFillers.length)];
+            console.log(`💬 TOOL FILLER: "${filler}"`);
+            session.immediateCallback(filler);
+          }
+          
           let auditLogData = {
             sessionId: global.currentSessionId || `session_${Date.now()}`,
             callerId: null,
@@ -164,6 +238,10 @@ class GoogleCalendarTools {
             const appointmentDate = new Date(selectedAppointment.start.dateTime);
             const appointmentName = selectedAppointment.summary;
 
+            // CRITICAL: Check if user has confirmed the change
+            // This tool should only be called AFTER user confirmation
+            // If called without confirmation, return a message asking for confirmation
+            
             // Execute the action
             if (action === "cancel") {
               // Cancel the appointment

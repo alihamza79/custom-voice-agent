@@ -171,6 +171,29 @@ function isValidTranscript(transcript, confidence = 0) {
     /\b(\d{1,2}|first|second|third|next|this|that)\s*$/i, // Ends with numbers or ordinals
   ];
   
+  // CRITICAL: Don't filter appointment action phrases that are complete
+  const completeAppointmentPhrases = [
+    /^i\s+want\s+to\s+shift$/i, // "I want to shift"
+    /^i\s+want\s+to\s+change$/i, // "I want to change"
+    /^i\s+want\s+to\s+move$/i, // "I want to move"
+    /^can\s+you\s+shift$/i, // "Can you shift"
+    /^can\s+you\s+change$/i, // "Can you change"
+    /ship/i, // Common STT mishearing of "shift"
+  ];
+  
+  const isCompleteAppointmentPhrase = completeAppointmentPhrases.some(pattern => pattern.test(cleanTranscript));
+  if (isCompleteAppointmentPhrase) {
+    console.log(`STT: Allowing complete appointment phrase: "${transcript}"`);
+    return true;
+  }
+  
+  // CRITICAL: Don't filter responses that start with "No" or "Yes" - these are complete responses!
+  const isRejectionResponse = /^(no|yes)\s*[.,!]?\s*(i|we|they|he|she|it)?\s*(want|need|would|should|can|could|will|shall)/i;
+  if (isRejectionResponse.test(cleanTranscript)) {
+    console.log(`STT: Allowing rejection response: "${transcript}"`);
+    return true;
+  }
+  
   for (const pattern of incompletePatterns) {
     if (pattern.test(cleanTranscript)) {
       console.log(`STT: Filtered incomplete sentence: "${transcript}"`);
@@ -179,7 +202,28 @@ function isValidTranscript(transcript, confidence = 0) {
   }
   
   // Must have at least 3 real words for a complete thought (unless it's very specific like "yes" or "no")
-  const shortValidResponses = ['yes', 'no', 'okay', 'ok', 'sure', 'thanks', 'thank you', 'goodbye', 'bye', 'hello', 'hi'];
+  const shortValidResponses = ['yes', 'no', 'okay', 'ok', 'sure', 'thanks', 'thank you', 'goodbye', 'bye', 'hello', 'hi', 'yeah', 'yep', 'nope', 'right', 'correct', 'wrong', 'true', 'false', 'kindly', 'please', 'can', 'you', 'shift', 'change', 'move', 'cancel', 'appointment', 'meeting', 'no bye', 'yes please', 'and let me', 'done', 'time will be same', 'same time', 'keep same time'];
+  
+  // CRITICAL: Allow confirmation phrases
+  const confirmationPhrases = [
+    'yes confirm', 'yes please', 'yes do that', 'yes go ahead', 'yes proceed', 'yes kindly confirm',
+    'yes it\'s correct', 'yes it\'s correct shift it', 'yes kindly confirm it',
+    'no change', 'no wait', 'no stop', 'no different', 'no modify',
+    'yeah confirm', 'yeah please', 'yeah do that', 'yeah go ahead',
+    'sure confirm', 'sure please', 'sure do that', 'sure go ahead',
+    'okay confirm', 'okay please', 'okay do that', 'okay go ahead',
+    'please confirm', 'please do', 'please go', 'please proceed',
+    'kindly confirm', 'kindly do', 'kindly go', 'kindly proceed'
+  ];
+  
+  const isConfirmationPhrase = confirmationPhrases.some(phrase => 
+    cleanTranscript.includes(phrase.toLowerCase())
+  );
+  
+  if (isConfirmationPhrase) {
+    console.log(`STT: Allowing confirmation phrase: "${transcript}"`);
+    return true;
+  }
   
   // ALLOW TIME RESPONSES: Add time patterns as valid short responses
   const timePatterns = [

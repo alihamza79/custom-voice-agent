@@ -4,11 +4,13 @@ const sseService = require('../services/sseService');
 const sessionManager = require('../services/sessionManager');
 const { detectLanguage } = require('../utils/languageDetection');
 const { globalTimingLogger } = require('../utils/timingLogger');
+const performanceLogger = require('../utils/performanceLogger');
 
 // Process final utterance from STT
 async function processUtterance(utterance, mediaStream) {
   try {
     globalTimingLogger.startOperation('Utterance Processing');
+    performanceLogger.startTiming(mediaStream.streamSid, 'stt');
     
     // Update language through global language service
     const currentLanguage = mediaStream.updateLanguage(utterance, 'transcript_analysis');
@@ -84,7 +86,27 @@ async function processUtterance(utterance, mediaStream) {
         }
       }
       
-      // Set up immediate feedback mechanism for tools
+      // CRITICAL: Set persistent callback for filler words - keep it active throughout session
+      const persistentFillerCallback = (response) => {
+        console.log(`🎯 PERSISTENT FILLER CALLBACK: "${response}"`);
+        console.log(`🔧 CALLBACK DEBUG: MediaStream exists: ${!!mediaStream}`);
+        if (mediaStream) {
+          console.log(`📢 SENDING FILLER TO TTS VIA AZURE TTS SERVICE`);
+          // Use Azure TTS service directly for filler words
+          const azureTTSService = require('../services/azureTTSService');
+          azureTTSService.synthesizeStreaming(response, mediaStream, 'english')
+            .then(() => {
+              console.log(`✅ FILLER TTS COMPLETED: "${response}"`);
+            })
+            .catch((error) => {
+              console.error(`❌ FILLER TTS ERROR:`, error);
+            });
+        } else {
+          console.log(`❌ CALLBACK DEBUG: Cannot send to TTS - missing mediaStream`);
+        }
+      };
+      
+      // Set up immediate feedback mechanism for tools - keep it active for entire session
       const immediateResponsePromise = new Promise((resolve) => {
         const timeoutId = setTimeout(() => resolve(null), 5000); // Increased timeout to 5 seconds
         sessionManager.setImmediateCallback(mediaStream.streamSid, (response) => {
@@ -92,6 +114,10 @@ async function processUtterance(utterance, mediaStream) {
           resolve(response);
         });
       });
+      
+      // CRITICAL: Re-set the persistent callback AFTER the immediate response promise
+      // This ensures filler words work throughout the session
+      sessionManager.setImmediateCallback(mediaStream.streamSid, persistentFillerCallback);
       
       const [graphResult, immediateResponse] = await Promise.allSettled([
         runCallerIdentificationGraph({ 
@@ -112,10 +138,10 @@ async function processUtterance(utterance, mediaStream) {
         console.log('ℹ️ No immediate feedback received or timeout occurred');
       }
       
-      // Clear callback after extended delay
-      setTimeout(() => {
-        sessionManager.setImmediateCallback(mediaStream.streamSid, null);
-      }, 30000);
+      // Keep callback active for the entire session - don't clear it
+      // setTimeout(() => {
+      //   sessionManager.setImmediateCallback(mediaStream.streamSid, null);
+      // }, 30000);
       
       const actualGraphResult = graphResult.status === 'fulfilled' ? graphResult.value : null;
       
@@ -153,6 +179,10 @@ async function processUtterance(utterance, mediaStream) {
       }
       
       globalTimingLogger.endOperation('Utterance Processing');
+      performanceLogger.endTiming(mediaStream.streamSid, 'stt');
+      
+      // Log structured performance metrics
+      performanceLogger.logPerformanceMetrics(mediaStream.streamSid);
       return;
     }
     
