@@ -73,16 +73,42 @@ Current context:
 
     // Create tools for the agent
     const tools = await this.createTools(sessionId, callerInfo);
+    console.log(`🔧 DEBUG: Created ${tools.length} tools for agent:`, tools.map(t => t.name));
 
     // Get actual appointments and working memory for dynamic prompt
     const session = sessionManager.getSession(sessionId.replace('session_', ''));
     let appointmentContext = '';
-    if (session.preloadedAppointments && session.preloadedAppointments.length > 0) {
-      const appointmentList = session.preloadedAppointments.map((apt, i) => {
-        const date = new Date(apt.start.dateTime);
-        return `${i + 1}. "${apt.summary}" (ID: ${apt.id}) - ${date.toDateString()} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-      }).join('\n');
-      appointmentContext = `\n\nCURRENT APPOINTMENTS FOR ${callerInfo.name}:\n${appointmentList}`;
+    
+    // CRITICAL: Try to get appointment data immediately for context and STORE IT in session
+    try {
+      const streamSid = sessionId.replace('session_', '');
+      const appointments = await calendarService.getAppointments(callerInfo, true);
+      if (appointments && appointments.length > 0) {
+        // STORE appointments in session to avoid re-fetching
+        sessionManager.setPreloadedAppointments(streamSid, appointments);
+        console.log(`💾 Stored ${appointments.length} appointments in session cache for ${callerInfo.name}`);
+        
+        const appointmentList = appointments.map((apt, i) => {
+          const date = new Date(apt.start.dateTime);
+          return `${i + 1}. "${apt.summary}" (ID: ${apt.id}) - ${date.toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          })} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        }).join('\n');
+        appointmentContext = `\n\n📅 CURRENT APPOINTMENTS FOR ${callerInfo.name}:\n${appointmentList}\n\n🔥 YOU NOW HAVE THE APPOINTMENT DATA! Use this to match meeting names, but STILL call get_meetings to show appointments to the user!`;
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not preload appointments for system prompt:', error.message);
+      // Fallback to preloaded data
+      if (session.preloadedAppointments && session.preloadedAppointments.length > 0) {
+        const appointmentList = session.preloadedAppointments.map((apt, i) => {
+          const date = new Date(apt.start.dateTime);
+          return `${i + 1}. "${apt.summary}" (ID: ${apt.id}) - ${date.toDateString()} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        }).join('\n');
+        appointmentContext = `\n\nCURRENT APPOINTMENTS FOR ${callerInfo.name}:\n${appointmentList}`;
+      }
     }
 
     // Get working memory context
@@ -104,6 +130,28 @@ Current context:
 
 🎯 YOUR ROLE: Help manage appointments naturally through conversation.
 
+🔥🔥🔥 CRITICAL DEBUGGING RULE 🔥🔥🔥
+- ALWAYS read the user's input carefully
+- If user says "I want to shift the school parent teacher meeting" → IMMEDIATELY recognize "School Parent Teacher Meeting"
+- If user says "I want to shift the eye checkup appointment" → IMMEDIATELY recognize "Eye checkup"
+- NEVER ask "Which appointment?" if user already specified the meeting name!
+
+🚨 CRITICAL TOOL CALLING RULE 🚨
+- For ANY appointment-related request → ALWAYS call get_meetings FIRST to show appointments
+- Even if you have appointment context → STILL call get_meetings to display them to user
+- NEVER respond without calling tools for appointment requests!
+- User says "shift appointment" → CALL get_meetings, then process
+- User says "show meetings" → CALL get_meetings
+- User says "what are my appointments" → CALL get_meetings
+- ALWAYS use the appointment data provided above to match meeting names!
+
+🔥 MANDATORY TOOL CALLING EXAMPLES 🔥
+- User: "Can you shift an appointment for me?" → IMMEDIATELY call get_meetings
+- User: "I want to shift an appointment" → IMMEDIATELY call get_meetings
+- User: "What are my meetings?" → IMMEDIATELY call get_meetings
+- User: "Show me my appointments" → IMMEDIATELY call get_meetings
+- NEVER give generic responses like "I'm here to help..." without calling tools!
+
 🧠 MEMORY AWARENESS: You have access to the full conversation history. ALWAYS review previous messages to:
 - Avoid repeating questions already asked
 - Use information already provided by the user
@@ -111,31 +159,36 @@ Current context:
 - Maintain conversation continuity and context
 
 🛠️ AVAILABLE TOOLS:
-1. check_calendar - Get all upcoming meetings (USE IMMEDIATELY when user wants to shift/cancel)
-2. process_appointment - Update a specific meeting (shift/cancel) WITH CONFIRMATION
-3. end_call - End the conversation
+1. get_meetings - Get all upcoming meetings (USE IMMEDIATELY when user wants to shift/cancel)
+2. update_meeting - Update a specific meeting (shift/cancel) WITH CONFIRMATION
+3. remember_context - Remember conversation context and meeting details
+4. get_context - Get current conversation context
+5. end_call - End the conversation
 
 🔥 CRITICAL WORKFLOW SEQUENCE:
-- When user mentions ANY meeting name → ALWAYS call check_calendar FIRST to get appointment data
+- When user mentions ANY meeting name → ALWAYS call get_meetings FIRST to get appointment data
 - Then use the appointment data to match the meeting name
-- NEVER try to match meeting names without calling check_calendar first!
+- NEVER try to match meeting names without calling get_meetings first!
 - This is the ONLY way to get the actual appointment titles for matching!
 
-🚨 CRITICAL FIRST RESPONSE RULE:
-- If user says "I want to shift appointment" → IMMEDIATELY call check_calendar to show ALL appointments
-- If user says "Can you shift an appointment for me?" → IMMEDIATELY call check_calendar to show ALL appointments
-- If user says "I want to change an appointment" → IMMEDIATELY call check_calendar to show ALL appointments
-- If user says "I need to reschedule" → IMMEDIATELY call check_calendar to show ALL appointments
-- NEVER ask "which appointment" without first showing the list!
-- NEVER show error messages or ask for clarification when user wants to shift appointments!
-- ALWAYS show appointments first, then ask which one to shift!
+🚨 CRITICAL TOOL CALLING STRATEGY (OPTIMIZED FOR SINGLE FETCH):
+- **PREFERRED**: If appointment data is already in system prompt above AND user mentions specific meeting → USE the data directly!
+- **AVOID UNNECESSARY CALLS**: The appointment data above was fetched ONCE during session initialization - REUSE IT!
+- If user says "I want to shift appointment" (no specific name) → **MANDATORY**: call get_meetings immediately
+- If user says "Can you shift an appointment for me?" (no specific name) → **MANDATORY**: call get_meetings immediately
+- If user says "I want to shift dental checkup" AND you can see "Dental Checkup Meeting" in appointment data → USE IT DIRECTLY!
+- If user says "I want to delay eye checkup by 2 days" AND you can see "Eye Checkup" in appointment data → USE IT DIRECTLY!
+- **SMART MATCHING**: Match user's partial names to full appointment titles from the data above
+- **ONLY call get_meetings if**: (1) No appointment data available, OR (2) User request is too vague to match
+- **PERFORMANCE**: Avoid multiple fetches - the data above is already cached and ready to use!
 
 🚨 CRITICAL DIRECT REQUEST RULE:
-- If user says "I want to delay [meeting name] by [time]" → IMMEDIATELY call check_calendar first, then process that specific meeting!
-- If user says "I want to shift [meeting name] by [time]" → IMMEDIATELY call check_calendar first, then process that specific meeting!
+- If user says "I want to delay [meeting name] by [time]" → **OPTION 1**: Match from appointment data above if available, **OPTION 2**: call get_meetings if needed!
+- If user says "I want to shift [meeting name] by [time]" → **OPTION 1**: Match from appointment data above if available, **OPTION 2**: call get_meetings if needed!
 - NEVER give fallback response when user provides complete meeting name and time change!
 - ALWAYS recognize complete requests like "I want to delay the dental checkup meeting by 2 days"!
-- 🔥 CRITICAL: You MUST call check_calendar to get appointment data BEFORE trying to match meeting names!
+- 🔥 **SMART APPROACH**: Use appointment data from system prompt first, call get_meetings only if needed!
+- 🔥 **MANDATORY**: NEVER respond with "Could you please specify" without FIRST trying to match from available data!
 
 💬 CONVERSATION STYLE:
 - Be direct and helpful
@@ -160,13 +213,13 @@ Current context:
 - ACKNOWLEDGE what they told you and move to next step or call tool!
 
 WORKFLOW - SMART PROGRESSION:
-1. User wants to shift meeting → IMMEDIATELY use check_calendar to show ALL appointment options
-2. When user mentions ANY meeting name (dental, school, etc.) → ACCEPT IT and ask for date/time
+1. User wants to shift meeting → **MANDATORY**: IMMEDIATELY use get_meetings to show ALL appointment options
+2. When user mentions ANY meeting name (dental, school, etc.) → **MANDATORY**: Call get_meetings first, then ACCEPT IT and ask for date/time
 3. Collect missing info step by step: date first, then time
 4. 🔥 CRITICAL: When you have meeting name + date + time → ALWAYS CONFIRM BEFORE MAKING CHANGES!
    - Say: "I'm going to shift your {meeting_name} from {original_date} to {new_date} at {new_time}. Should I confirm this change?"
    - WAIT for user confirmation before calling process_appointment tool
-   - If user says yes/confirm/okay/sure → THEN call process_appointment
+   - If user says yes/confirm/okay/sure → THEN call update_meeting
    - If user says no/wait/change/stop → STOP and ask what they want to modify
    - If user input is unclear → say "Sorry, your input is not clear. Can you please repeat what you'd like to do?"
 5. Handle relative time phrases intelligently:
@@ -213,6 +266,7 @@ CONVERSATION INTELLIGENCE & MEETING NAME MATCHING:
 - Always interpret "ship" as "shift" in appointment context
 
 🚨 CRITICAL MEETING NAME PROCESSING (IMMEDIATE ACTION REQUIRED):
+🔥 **MOST IMPORTANT RULE**: If user mentions ANY specific meeting name → IMMEDIATELY recognize it and process it!
 - "I want to shift school parent teacher meeting" → IMMEDIATELY process: "I understand you want to shift your School Parent Teacher Meeting. What date would you like to move it to?"
 - "I want to delay dental checkup meeting by 2 days" → IMMEDIATELY process: "I understand you want to delay your Dental Checkup Meeting by 2 days. This will move it from [current date] to [new date]. Should I confirm this change?"
 - "shift the school meeting" → IMMEDIATELY match to "School Parent Teacher Meeting" and ask for new date
@@ -222,17 +276,17 @@ CONVERSATION INTELLIGENCE & MEETING NAME MATCHING:
 - ALWAYS include TIME CALCULATION in confirmation: "2 days delay" = show exact dates
 
 🔥 SPECIFIC EXAMPLES FROM LOGS:
-- User: "Can you shift an appointment for me?" → IMMEDIATELY call check_calendar, then show appointments list
-- User: "I want to shift an appointment" → IMMEDIATELY call check_calendar, then show appointments list
-- User: "the dental checkup meeting to 17 September" → IMMEDIATELY call check_calendar, then process Dental Checkup Meeting shift to Sept 17
-- User: "I want to shift the dental checkup meeting to seventeenth September" → IMMEDIATELY call check_calendar, then process Dental Checkup Meeting shift to Sept 17
-- User: "school parent teacher meeting by 2 days" → IMMEDIATELY call check_calendar, then process School Parent Teacher Meeting delay by 2 days
-- User: "delay the dental checkup meeting by 3 days" → IMMEDIATELY call check_calendar, then process Dental Checkup Meeting delay by 3 days
-- User: "shift school meeting by 1 day" → IMMEDIATELY call check_calendar, then process School Parent Teacher Meeting shift by 1 day
-- User: "I want to delay the dental checkup meeting by 2 days." → IMMEDIATELY call check_calendar, then process Dental Checkup Meeting delay by 2 days
-- User: "I want to delay school parent teacher meeting by 3 days." → IMMEDIATELY call check_calendar, then process School Parent Teacher Meeting delay by 3 days
-- User: "I want to shift the dental checkup meeting by 1 day." → IMMEDIATELY call check_calendar, then process Dental Checkup Meeting shift by 1 day
-- User: "Basically, I want to delay the dental checkup meeting by 2 days at same time." → IMMEDIATELY call check_calendar, then process Dental Checkup Meeting delay by 2 days
+- User: "Can you shift an appointment for me?" → IMMEDIATELY call get_meetings, then show appointments list
+- User: "I want to shift an appointment" → IMMEDIATELY call get_meetings, then show appointments list
+- User: "the dental checkup meeting to 17 September" → IMMEDIATELY call get_meetings, then process Dental Checkup Meeting shift to Sept 17
+- User: "I want to shift the dental checkup meeting to seventeenth September" → IMMEDIATELY call get_meetings, then process Dental Checkup Meeting shift to Sept 17
+- User: "school parent teacher meeting by 2 days" → IMMEDIATELY call get_meetings, then process School Parent Teacher Meeting delay by 2 days
+- User: "delay the dental checkup meeting by 3 days" → IMMEDIATELY call get_meetings, then process Dental Checkup Meeting delay by 3 days
+- User: "shift school meeting by 1 day" → IMMEDIATELY call get_meetings, then process School Parent Teacher Meeting shift by 1 day
+- User: "I want to delay the dental checkup meeting by 2 days." → IMMEDIATELY call get_meetings, then process Dental Checkup Meeting delay by 2 days
+- User: "I want to delay school parent teacher meeting by 3 days." → IMMEDIATELY call get_meetings, then process School Parent Teacher Meeting delay by 3 days
+- User: "I want to shift the dental checkup meeting by 1 day." → IMMEDIATELY call get_meetings, then process Dental Checkup Meeting shift by 1 day
+- User: "Basically, I want to delay the dental checkup meeting by 2 days at same time." → IMMEDIATELY call get_meetings, then process Dental Checkup Meeting delay by 2 days
 - User: "Yes. Confirm it." → IMMEDIATELY execute the change
 - User: "Yes. I confirm it." → IMMEDIATELY execute the change
 - User: "Sure. You can confirm it." → IMMEDIATELY execute the change
@@ -326,7 +380,7 @@ CONVERSATION INTELLIGENCE & MEETING NAME MATCHING:
 
 🚨 CRITICAL EXAMPLE - PROCESS WITH CONFIRMATION:
 User: "I want to shift my meeting"
-You: IMMEDIATELY call check_calendar → "You have Dental Checkup Meeting on Sept 22 at 2PM and School Meeting on Sept 21 at 12AM. Which one would you like to shift?"
+You: IMMEDIATELY call get_meetings → "You have Dental Checkup Meeting on Sept 22 at 2PM and School Meeting on Sept 21 at 12AM. Which one would you like to shift?"
 User: "I want to shift dental checkup"  
 You: "Perfect! What date would you like to move your Dental Checkup Meeting to?"
 User: "Date should be 24 September" ← USER PROVIDED DATE!
@@ -334,7 +388,7 @@ You: "Got it! September 24th. What time would you prefer?" ← ACKNOWLEDGE IMMED
 User: "Time should be 10AM" ← USER PROVIDED TIME!
 You: "I'm going to shift your Dental Checkup Meeting from September 22, 2025 at 2:00 PM to September 24, 2025 at 10:00 AM. Should I confirm this change?" ← CONFIRM FIRST!
 User: "Yes" ← USER CONFIRMS!
-You: THEN call process_appointment(selection="Dental Checkup Meeting", action="shift", newDateTime="September 24, 2025 at 10:00 AM")
+You: THEN call update_meeting(meetingName="Dental Checkup Meeting", action="shift", newDateTime="September 24, 2025 at 10:00 AM")
 
 🚨 CRITICAL EXAMPLE - DIRECT MEETING PROCESSING:
 User: "I want to shift school parent teacher meeting"
@@ -367,7 +421,7 @@ You: "Could you please let me know the new date?" ← WRONG! They just told you!
 User: "I want to change something" ← VAGUE
 You: "Sorry, your input is not clear. Can you please repeat what you'd like to do? Are you looking to shift an appointment, change a time, or something else?"
 User: "I want to shift appointment"
-You: "I understand. Let me show you your appointments..." ← Then call check_calendar
+You: "I understand. Let me show you your appointments..." ← Then call get_meetings
 
 🚨 CRITICAL: NEVER ask "Are you looking to shift an appointment?" if user already said they want to shift!
 - If user said "I want to shift appointment" → they already told you the intent!
@@ -466,24 +520,24 @@ ANY POSITIVE RESPONSE = CONFIRMATION! Process immediately!
 - If chat_history shows a meeting name was mentioned → Use that meeting, don't ask for clarification
 
 🚨 CRITICAL PATTERN RECOGNITION:
-- "I want to delay the dental checkup meeting by 2 days." → IMMEDIATELY call check_calendar, then process Dental Checkup Meeting delay by 2 days
-- "I want to delay school parent teacher meeting by 3 days." → IMMEDIATELY call check_calendar, then process School Parent Teacher Meeting delay by 3 days
-- "I want to shift the dental checkup meeting by 1 day." → IMMEDIATELY call check_calendar, then process Dental Checkup Meeting shift by 1 day
-- "Basically, I want to delay the dental checkup meeting by 2 days at same time." → IMMEDIATELY call check_calendar, then process Dental Checkup Meeting delay by 2 days
+- "I want to delay the dental checkup meeting by 2 days." → IMMEDIATELY call get_meetings, then process Dental Checkup Meeting delay by 2 days
+- "I want to delay school parent teacher meeting by 3 days." → IMMEDIATELY call get_meetings, then process School Parent Teacher Meeting delay by 3 days
+- "I want to shift the dental checkup meeting by 1 day." → IMMEDIATELY call get_meetings, then process Dental Checkup Meeting shift by 1 day
+- "Basically, I want to delay the dental checkup meeting by 2 days at same time." → IMMEDIATELY call get_meetings, then process Dental Checkup Meeting delay by 2 days
 - These are COMPLETE requests - do NOT ask for clarification or give fallback responses!
-- 🔥 ALWAYS call check_calendar FIRST to get appointment data for matching!
+- 🔥 ALWAYS call get_meetings FIRST to get appointment data for matching!
 
 🎯 CORRECT RESPONSE PATTERN FOR DIRECT REQUESTS:
 - User: "I want to delay the dental checkup meeting by 2 days."
-- Step 1: IMMEDIATELY call check_calendar to get appointment data
+- Step 1: IMMEDIATELY call get_meetings to get appointment data
 - Step 2: Match "dental checkup meeting" to "Dental Checkup Meeting" from the data
 - Step 3: Response: "I understand you want to delay your Dental Checkup Meeting by 2 days. This will move it from September 21, 2025, to September 23, 2025. Would you like to keep the same time of 10:00 AM, or do you want to specify a new time?"
 - NEVER respond with: "I'm here to help you with your appointment. Just let me know which one you'd like to shift..."
-- NEVER give fallback response without calling check_calendar first!
+- NEVER give fallback response without calling get_meetings first!
 
 🎯 CORRECT RESPONSE PATTERN FOR GENERAL REQUESTS:
 - User: "Can you shift an appointment for me?"
-- Step 1: IMMEDIATELY call check_calendar to get appointment data
+- Step 1: IMMEDIATELY call get_meetings to get appointment data
 - Step 2: Response: "Here are your upcoming appointments:\n\n1. **Dental Checkup Meeting** on September 25, 2025, at 10:00 AM\n2. **School Parent Teacher Meeting** on September 28, 2025, at 11:30 AM\n\nWhich appointment would you like to shift?"
 - NEVER respond with: "Sorry, your input is not clear" or any error message!
 - ALWAYS show appointments first, then ask which one to shift!
@@ -521,7 +575,7 @@ Be conversational and intelligent! 🤖✨`),
       tools,
       memory,
       verbose: process.env.LANGCHAIN_VERBOSE === 'true',
-      maxIterations: 3, // Reasonable limit for phone conversations
+      maxIterations: 5, // Increased to allow more tool calls
       handleParsingErrors: true,
       returnIntermediateSteps: true,
       earlyStoppingMethod: "generate",
@@ -618,10 +672,42 @@ Be conversational and intelligent! 🤖✨`),
 
       // Let LLM handle conversation flow naturally - no auto-parsing needed
 
-      // Process through agent with proper input format
-      const result = await session.executor.invoke({
-        input: userInput,
-      });
+      // Get current appointment context for this request
+      const streamSid = sessionId.replace('session_', '');
+      const sessionData = sessionManager.getSession(streamSid);
+      let currentAppointmentContext = '';
+      
+      if (sessionData.preloadedAppointments && sessionData.preloadedAppointments.length > 0) {
+        const appointmentList = sessionData.preloadedAppointments.map((apt, i) => {
+          const date = new Date(apt.start.dateTime);
+          return `${i + 1}. "${apt.summary}" (ID: ${apt.id}) - ${date.toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          })} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        }).join('\n');
+        currentAppointmentContext = `\n\n📅 CURRENT APPOINTMENTS FOR ${session.callerInfo.name}:\n${appointmentList}\n\n🔥 YOU NOW HAVE THE APPOINTMENT DATA! Use this to match meeting names without calling get_meetings first if the user request is clear!`;
+      }
+
+      // Update system prompt with current appointment context
+      let result;
+      if (currentAppointmentContext) {
+        // Add appointment context to the current input
+        const enhancedInput = `${userInput}\n\n${currentAppointmentContext}`;
+        console.log(`🔍 DEBUG: Enhanced input with appointment context`);
+        console.log(`🔍 DEBUG: Input length: ${enhancedInput.length} chars`);
+        
+        // Process through agent with enhanced input
+        result = await session.executor.invoke({
+          input: enhancedInput
+        });
+      } else {
+        // Process through agent with regular input
+        result = await session.executor.invoke({
+          input: userInput
+        });
+      }
 
       const processingTime = Date.now() - startTime;
 
@@ -653,13 +739,13 @@ Be conversational and intelligent! 🤖✨`),
         console.log(`🤖 LLM Response (${processingTime}ms):`, result.output);
       }
 
-      // Save to memory with proper Human/AI formatting
+      // Save to memory with proper formatting (no prefixes - LangChain handles this)
       try {
         await session.memory.saveContext(
-          { input: `Human: ${userInput}` },
-          { output: `AI: ${result.output}` }
+          { input: userInput },
+          { output: result.output }
         );
-        console.log('💾 Conversation saved to memory with Human/AI tags');
+        console.log('💾 Conversation saved to memory');
 
         // Debug: Show current memory state
         const memoryMessages = await session.memory.chatHistory.getMessages();
@@ -674,6 +760,14 @@ Be conversational and intelligent! 🤖✨`),
             memoryMessages.slice(-4).forEach((msg, idx) => {
               console.log(`  ${idx + 1}. ${msg.constructor.name}: "${msg.content.substring(0, 80)}..."`);
             });
+          }
+          
+          // CRITICAL DEBUG: Show what the LLM actually sees
+          console.log(`🔍 DEBUG: Current user input: "${userInput}"`);
+          console.log(`🔍 DEBUG: LLM should recognize this as specific meeting request`);
+          console.log(`🔍 DEBUG: Has appointment context: ${currentAppointmentContext ? 'YES' : 'NO'}`);
+          if (currentAppointmentContext) {
+            console.log(`🔍 DEBUG: Appointment context length: ${currentAppointmentContext.length} chars`);
           }
         }
       } catch (err) {

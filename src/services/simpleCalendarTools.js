@@ -32,8 +32,18 @@ class SimpleCalendarTools {
               type: 'customer'
             };
 
-            // Get appointments from Google Calendar
-            const appointments = await calendarService.getAppointments(callerInfo, true);
+            // Check if we already have cached appointments in session
+            let appointments;
+            if (session.preloadedAppointments && session.preloadedAppointments.length > 0) {
+              console.log('⚡ Using cached appointments from session (avoiding re-fetch)');
+              appointments = session.preloadedAppointments;
+            } else {
+              console.log('📅 No cached data, fetching from Google Calendar...');
+              // Get appointments from Google Calendar
+              appointments = await calendarService.getAppointments(callerInfo, true);
+              // Store in session for future use
+              sessionManager.setPreloadedAppointments(this.streamSid, appointments);
+            }
             
             if (appointments.length === 0) {
               return "No upcoming appointments found.";
@@ -94,8 +104,18 @@ class SimpleCalendarTools {
               type: 'customer'
             };
 
-            // Find the meeting by name
-            const appointments = await calendarService.getAppointments(callerInfo, true);
+            // Find the meeting by name - use cached data if available
+            let appointments;
+            if (session.preloadedAppointments && session.preloadedAppointments.length > 0) {
+              console.log('⚡ Using cached appointments for meeting lookup (avoiding re-fetch)');
+              appointments = session.preloadedAppointments;
+            } else {
+              console.log('📅 No cached data, fetching from Google Calendar for meeting lookup...');
+              appointments = await calendarService.getAppointments(callerInfo, true);
+              // Store in session for future use
+              sessionManager.setPreloadedAppointments(this.streamSid, appointments);
+            }
+            
             const meeting = appointments.find(apt => 
               apt.summary.toLowerCase().includes(meetingName.toLowerCase()) ||
               meetingName.toLowerCase().includes(apt.summary.toLowerCase())
