@@ -1,12 +1,12 @@
 // Simple Calendar Tools - Let GPT-4o handle conversations naturally
 // Only 3 tools: get meetings, update meeting, end call
 
-const { DynamicStructuredTool, DynamicTool } = require("@langchain/core/tools");
-const { z } = require("zod");
-const calendarService = require('./googleCalendarService');
+import { DynamicStructuredTool, DynamicTool } from "@langchain/core/tools";
+import { z } from "zod";
+import calendarService from './googleCalendarService';
 const whatsappService = require('./whatsappService');
 const backgroundLogger = require('./backgroundLogger');
-const sessionManager = require('./sessionManager');
+const sessionManager = require('./sessionManager');     
 
 class SimpleCalendarTools {
   constructor(streamSid = null) {

@@ -1,7 +1,7 @@
 // Google Calendar Service with Service Account Authentication
 // Optimized for 2-3 second latency with caching and parallel processing
 
-require('dotenv').config(); // Load environment variables
+require('dotenv').config();
 
 const { google } = require('googleapis');
 const fs = require('fs');

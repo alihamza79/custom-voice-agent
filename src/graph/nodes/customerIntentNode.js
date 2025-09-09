@@ -71,6 +71,15 @@ const customerIntentNode = RunnableLambda.from(async (state) => {
     console.log('✅ Session already exists for intent classification');
   }
   
+  // DEBUG: Log session state
+  console.log('🔍 DEBUG Session state:', {
+    hasSession: !!session,
+    hasLangChainSession: !!(session?.langChainSession),
+    workflowActive: session?.langChainSession?.workflowActive,
+    workflowType: session?.langChainSession?.workflowType,
+    rawLangChainSession: session?.langChainSession
+  });
+  
   if (session && session.langChainSession && session.langChainSession.workflowActive) {
     globalTimingLogger.logMoment('Bypassing intent - already in active LangChain workflow');
     
@@ -85,8 +94,7 @@ const customerIntentNode = RunnableLambda.from(async (state) => {
       globalTimingLogger.startOperation('Continue Workflow');
       const workflowResult = await appointmentHandler.continueWorkflow(
         state.streamSid,
-        state.transcript,
-        state.streamSid
+        state.transcript
       );
       globalTimingLogger.endOperation('Continue Workflow');
       
