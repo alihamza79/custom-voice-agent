@@ -70,5 +70,7 @@ typings/
 
 # Parcel-bundler cache (https://parceljs
 
-# Google Cloud credentials
+# Google Service Account Credentials
 src/config/calender-agent.json
+src/config/*-agent.json
+src/config/*credentials*.json

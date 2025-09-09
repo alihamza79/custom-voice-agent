@@ -445,7 +445,7 @@ Classify this into one of the 5 categories.`;
         });
       } else {
         globalTimingLogger.logMoment('No workflow result to process');
-        sessionManager.setLangChainSession(state.streamSid, null);
+        // Don't set session to null - let the workflow maintain its state
       }
       
     } else {

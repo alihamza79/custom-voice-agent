@@ -23,6 +23,15 @@ class SessionManager {
     
     const session = this.sessions.get(streamSid);
     this.touchSession(streamSid); // Update last activity
+    
+    // DEBUG: Log session retrieval
+    if (streamSid && streamSid.includes('MZ')) { // Only log for actual calls, not system calls
+      console.log(`🔍 DEBUG sessionManager getSession ${streamSid}:`, {
+        hasLangChainSession: !!session?.langChainSession,
+        workflowActive: session?.langChainSession?.workflowActive
+      });
+    }
+    
     return session;
   }
   
@@ -106,7 +115,12 @@ class SessionManager {
   setLangChainSession(streamSid, langChainSessionData) {
     const session = this.getSession(streamSid);
     session.langChainSession = langChainSessionData;
-    console.log(`🧠 Set LangChain session for ${streamSid}`);
+    console.log(`🧠 Set LangChain session for ${streamSid}:`, langChainSessionData);
+    console.log(`🔍 DEBUG sessionManager: Session after setting langChain:`, {
+      streamSid,
+      hasSession: !!session,
+      langChainSession: session.langChainSession
+    });
   }
   
   // Set immediate callback for session
