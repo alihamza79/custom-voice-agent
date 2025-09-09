@@ -22,6 +22,8 @@ lib-cov
 coverage
 *.lcov
 
+
+
 # nyc test coverage
 .nyc_output
 
@@ -67,3 +69,6 @@ typings/
 .cache/
 
 # Parcel-bundler cache (https://parceljs
+
+# Google Cloud credentials
+src/config/calender-agent.json
