@@ -22,8 +22,8 @@ class GoogleCalendarTools {
         name: "check_calendar",
         description: "MANDATORY: Use this IMMEDIATELY when user asks about their meetings/appointments. Examples: 'which meetings I have', 'what appointments', 'show my schedule'.",
         schema: z.object({
-          action: z.string().optional().describe("The action user wants (shift/cancel/view)"),
-          forceRefresh: z.boolean().optional().describe("Force refresh cache (default: false)")
+          action: z.string().nullable().describe("The action user wants (shift/cancel/view)"),
+          forceRefresh: z.boolean().nullable().describe("Force refresh cache (default: false)")
         }),
         func: async ({ action, forceRefresh = false }) => {
           try {
@@ -157,9 +157,9 @@ class GoogleCalendarTools {
         schema: z.object({
           selection: z.string().describe("Appointment identifier from user (e.g., 'business meeting', 'first', '1', 'doctor appointment', 'dental', partial names OK)"),
           action: z.enum(["shift", "cancel"]).describe("Action: 'shift' for reschedule/move/change, 'cancel' for cancel/delete/remove"),
-          newDateTime: z.string().optional().describe("New date/time for shifting (e.g., '29 September', 'tomorrow 3 PM', 'next Monday', natural language OK)"),
-          newTime: z.string().optional().describe("Alternative new time field (e.g., '2 PM tomorrow', '10 AM next week')"),
-          contextFromPrevious: z.boolean().optional().describe("Set to true if using appointment/date info from previous conversation turns")
+          newDateTime: z.string().nullable().describe("New date/time for shifting (e.g., '29 September', 'tomorrow 3 PM', 'next Monday', natural language OK)"),
+          newTime: z.string().nullable().describe("Alternative new time field (e.g., '2 PM tomorrow', '10 AM next week')"),
+          contextFromPrevious: z.boolean().nullable().describe("Set to true if using appointment/date info from previous conversation turns")
         }),
         func: async ({ selection, action, newDateTime, newTime, contextFromPrevious = false }) => {
           const operationStartTime = Date.now();
@@ -476,8 +476,8 @@ class GoogleCalendarTools {
         schema: z.object({
           summary: z.string().describe("Appointment title/summary"),
           dateTime: z.string().describe("Date and time for the appointment"),
-          duration: z.number().optional().describe("Duration in minutes (default: 60)"),
-          description: z.string().optional().describe("Additional details")
+          duration: z.number().nullable().describe("Duration in minutes (default: 60)"),
+          description: z.string().nullable().describe("Additional details")
         }),
         func: async ({ summary, dateTime, duration = 60, description }) => {
           const operationStartTime = Date.now();

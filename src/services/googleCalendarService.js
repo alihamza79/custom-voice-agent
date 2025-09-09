@@ -18,8 +18,9 @@ class GoogleCalendarService {
     this.cacheExpiry = 30 * 1000; // 30 seconds cache
     this.lastCacheUpdate = 0;
 
-    // Calendar ID - can be primary or shared calendar
-    this.calendarId = process.env.GOOGLE_CALENDAR_ID || 'primary';
+    // Calendar ID - using Calendar_Agent calendar instead of service account's primary
+    // TODO: Replace with actual Calendar_Agent calendar ID after sharing
+    this.calendarId = process.env.GOOGLE_CALENDAR_ID || 'primary'; // Will be updated to Calendar_Agent ID
 
     this.initializeAuth();
   }

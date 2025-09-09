@@ -250,11 +250,11 @@ class SimpleCalendarTools {
         name: "remember_context",
         description: "Remember important information from the conversation (which meeting user wants, new date/time, etc.). Use this to build working memory.",
         schema: z.object({
-          meetingName: z.string().optional().describe("Which meeting the user wants to change (e.g., 'dental', 'school', 'doctor')"),
-          action: z.string().optional().describe("What they want to do (shift, cancel)"),
-          newDate: z.string().optional().describe("New date they mentioned"),
-          newTime: z.string().optional().describe("New time they mentioned"),
-          notes: z.string().optional().describe("Any other important context")
+          meetingName: z.string().nullable().describe("Which meeting the user wants to change (e.g., 'dental', 'school', 'doctor')"),
+          action: z.string().nullable().describe("What they want to do (shift, cancel)"),
+          newDate: z.string().nullable().describe("New date they mentioned"),
+          newTime: z.string().nullable().describe("New time they mentioned"),
+          notes: z.string().nullable().describe("Any other important context")
         }),
         func: async ({ meetingName, action, newDate, newTime, notes }) => {
           try {

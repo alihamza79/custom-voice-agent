@@ -85,10 +85,16 @@ async function generateResponse(state, config = {}) {
 
 📅 APPOINTMENT CONTEXT:${appointmentContext}
 
+⚡ TOOL CALLING EXAMPLES:
+When user confirms shifting "Ali Test appointment" to Friday Sept 12 at 4PM:
+- Call shift_appointment with: appointmentName="Ali Test appointment", newDateTime="2025-09-12T16:00:00Z", confirmationReceived=true
+
 IMPORTANT: 
 - Only work with existing appointments. You cannot create new appointments.
 - When user confirms an action, execute it immediately using the appropriate tool
 - For shift_appointment tool, always set confirmationReceived=true when user has confirmed
+- Use ISO format for dates: YYYY-MM-DDTHH:mm:ssZ
+- Extract appointment name from the appointment list above
 
 Current date/time: ${new Date().toISOString()}`;
 
@@ -136,12 +142,16 @@ function toolsCondition(state) {
     return "tools";
   }
 
-  // Check for end call signals in content
-  if (lastMessage?.content?.toLowerCase().includes('goodbye') ||
-      lastMessage?.content?.toLowerCase().includes('thank you')) {
+  // Check for explicit end call signals in content
+  const content = lastMessage?.content?.toLowerCase() || '';
+  if (content.includes('goodbye') || 
+      content.includes('have a great day') || 
+      content.includes('call is complete') ||
+      content.includes('anything else today')) {
     return "__end__";
   }
 
+  // Default: continue conversation (don't end unless explicitly told)  
   return "__end__";
 }
 

@@ -4,7 +4,7 @@
  * Based on Python appointment-agent pattern
  */
 
-const { DynamicTool } = require("@langchain/core/tools");
+const { DynamicTool, DynamicStructuredTool } = require("@langchain/core/tools");
 const { z } = require("zod");
 
 /**
@@ -19,10 +19,8 @@ async function createCalendarTools(streamSid) {
   const getAppointmentsTool = new DynamicTool({
     name: "get_appointments", 
     description: "Get all upcoming appointments for the caller. Always call this first when user wants to shift/cancel appointments.",
-    schema: z.object({
-      forceRefresh: z.boolean().nullable().optional().describe("Force refresh from calendar")
-    }),
-    func: async ({ forceRefresh = false }) => {
+    func: async () => {
+      const forceRefresh = false;
       try {
         const session = sessionManager.getSession(streamSid);
         const callerInfo = session?.callerInfo;
@@ -73,16 +71,16 @@ async function createCalendarTools(streamSid) {
     }
   });
 
-  const shiftAppointmentTool = new DynamicTool({
-    name: "shift_appointment",
+  const shiftAppointmentTool = new DynamicStructuredTool({
+    name: "shift_appointment", 
     description: "Shift an existing appointment to a new date/time. Always get confirmation before calling this.",
     schema: z.object({
-      appointmentId: z.string().nullable().optional().describe("The ID of the appointment to shift"),
-      appointmentName: z.string().nullable().optional().describe("The name/title of the appointment"),
-      newDateTime: z.string().nullable().optional().describe("New date and time in ISO format"),
-      confirmationReceived: z.boolean().nullable().optional().describe("Whether user has confirmed the change")
+      appointmentName: z.string().describe("The name/title of the appointment"),
+      newDateTime: z.string().describe("New date and time in ISO format"),
+      confirmationReceived: z.boolean().describe("Whether user has confirmed the change")
     }),
-    func: async ({ appointmentId, appointmentName, newDateTime, confirmationReceived }) => {
+    func: async ({ appointmentName, newDateTime, confirmationReceived }) => {
+      console.log('🔍 DEBUG shift_appointment params:', { appointmentName, newDateTime, confirmationReceived });
       try {
         if (!confirmationReceived) {
           return "Error: Please get user confirmation before making changes to appointments.";
@@ -92,7 +90,6 @@ async function createCalendarTools(streamSid) {
         const appointments = session?.preloadedAppointments || [];
         
         const appointment = appointments.find(apt => 
-          apt.id === appointmentId || 
           apt.summary.toLowerCase().includes(appointmentName.toLowerCase())
         );
 
@@ -130,15 +127,14 @@ async function createCalendarTools(streamSid) {
     }
   });
 
-  const cancelAppointmentTool = new DynamicTool({
+  const cancelAppointmentTool = new DynamicStructuredTool({
     name: "cancel_appointment",
     description: "Cancel an existing appointment. Always get confirmation before calling this.",
     schema: z.object({
-      appointmentId: z.string().nullable().optional().describe("The ID of the appointment to cancel"),
-      appointmentName: z.string().nullable().optional().describe("The name/title of the appointment"),
-      confirmationReceived: z.boolean().nullable().optional().describe("Whether user has confirmed the cancellation")
+      appointmentName: z.string().describe("The name/title of the appointment"),
+      confirmationReceived: z.boolean().describe("Whether user has confirmed the cancellation")
     }),
-    func: async ({ appointmentId, appointmentName, confirmationReceived }) => {
+    func: async ({ appointmentName, confirmationReceived }) => {
       try {
         if (!confirmationReceived) {
           return "Error: Please get user confirmation before canceling appointments.";
@@ -148,7 +144,6 @@ async function createCalendarTools(streamSid) {
         const appointments = session?.preloadedAppointments || [];
         
         const appointment = appointments.find(apt => 
-          apt.id === appointmentId || 
           apt.summary.toLowerCase().includes(appointmentName.toLowerCase())
         );
 
@@ -168,10 +163,8 @@ async function createCalendarTools(streamSid) {
   const endCallTool = new DynamicTool({
     name: "end_call",
     description: "End the conversation when user says goodbye or task is complete.",
-    schema: z.object({
-      reason: z.string().nullable().optional().describe("Reason for ending the call")
-    }),
-    func: async ({ reason = "Task completed" }) => {
+    func: async () => {
+      const reason = "Task completed";
       console.log(`Ending call for ${streamSid}: ${reason}`);
       return "Goodbye! Have a great day!";
     }
