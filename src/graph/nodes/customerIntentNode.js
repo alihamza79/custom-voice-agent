@@ -4,7 +4,7 @@ const OpenAI = require('openai');
 const appointmentHandler = require('../../workflows/AppointmentWorkflowHandler');
 const { globalTimingLogger } = require('../../utils/timingLogger');
 const performanceLogger = require('../../utils/performanceLogger');
-const calendarService = require('../../services/googleCalendarService');
+const calendarPreloader = require('../../services/calendarPreloader');
 const sessionManager = require('../../services/sessionManager');
 
 const openai = new OpenAI();
@@ -261,23 +261,17 @@ Classify this into one of the 5 categories.`;
       // Store caller info in session
       sessionManager.setCallerInfo(state.streamSid, callerInfo);
 
-      // 🚀 PERFORMANCE OPTIMIZATION: Preload calendar data immediately per session
-      // Start fetching calendar data in background while processing workflow
-      if (session && !session.calendarPreloadPromise) {
-        console.log('🚀 Preloading calendar data for faster response...');
-        const preloadPromise = calendarService.getAppointments(callerInfo)
-          .then(appointments => {
-            console.log(`📅 Preloaded ${appointments.length} appointments for ${state.streamSid}`);
-            sessionManager.setPreloadedAppointments(state.streamSid, appointments);
-            return appointments;
-          })
-          .catch(error => {
-            console.warn('⚠️ Calendar preload failed:', error.message);
-            sessionManager.setPreloadedAppointments(state.streamSid, []);
-            return [];
-          });
+      // 🚀 PERFORMANCE OPTIMIZATION: Use calendar preloader for optimized fetching
+      // Check if calendar data is already available or start preload
+      if (session && !session.preloadedAppointments) {
+        console.log('🚀 Using calendar preloader for faster response...');
         
-        sessionManager.setPreloadedAppointments(state.streamSid, null, preloadPromise);
+        // Start preload in background - don't await to keep response fast
+        calendarPreloader.startPreloading(state.streamSid, callerInfo).catch(error => {
+          console.warn('⚠️ Calendar preload failed:', error.message);
+        });
+      } else if (session?.preloadedAppointments) {
+        console.log(`⚡ Calendar data already available: ${session.preloadedAppointments.length} appointments`);
       }
 
       // INTELLIGENT GENERIC FILLER: Send appropriate filler based on intent

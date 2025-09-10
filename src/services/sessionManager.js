@@ -24,11 +24,13 @@ class SessionManager {
     const session = this.sessions.get(streamSid);
     this.touchSession(streamSid); // Update last activity
     
-    // DEBUG: Log session retrieval
+    // DEBUG: Log session retrieval with cache info
     if (streamSid && streamSid.includes('MZ')) { // Only log for actual calls, not system calls
       console.log(`🔍 DEBUG sessionManager getSession ${streamSid}:`, {
         hasLangChainSession: !!session?.langChainSession,
-        workflowActive: session?.langChainSession?.workflowActive
+        workflowActive: session?.langChainSession?.workflowActive,
+        hasCachedAppointments: !!session?.preloadedAppointments,
+        cachedCount: session?.preloadedAppointments?.length || 0
       });
     }
     
@@ -136,7 +138,15 @@ class SessionManager {
     if (promise) {
       session.calendarPreloadPromise = promise;
     }
-    // console.log(`📅 Set preloaded appointments for ${streamSid}: ${appointments?.length || 0} appointments`);
+    
+    // Force update last activity to prevent cleanup
+    session.lastActivity = Date.now();
+    
+    console.log(`📅 CACHE SET for ${streamSid}: ${appointments?.length || 0} appointments cached`);
+    console.log(`📅 CACHE VERIFY: Session has ${session.preloadedAppointments?.length || 0} appointments`);
+    
+    // Ensure session is not cleaned up
+    this.scheduleCleanup(streamSid);
   }
   
   // Update session with partial data
@@ -230,12 +240,16 @@ class SessionManager {
     }
   }
   
-  // Get session statistics
+  // Get session statistics  
   getStats() {
+    const sessionsWithCache = Array.from(this.sessions.values())
+      .filter(session => session.preloadedAppointments?.length > 0).length;
+    
     return {
       activeSessions: this.sessions.size,
       activeMediaStreams: this.activeMediaStreams.size,
       activeTimeouts: this.sessionTimeouts.size,
+      sessionsWithCache: sessionsWithCache,
       oldestSession: this.getOldestSessionAge()
     };
   }

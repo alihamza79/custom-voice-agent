@@ -2,6 +2,8 @@
 const { RunnableLambda } = require("@langchain/core/runnables");
 const { identifyCaller } = require('../utils/phonebook');
 const { generatePersonalizedGreeting } = require('../utils/greetingGenerator');
+const calendarPreloader = require('../../services/calendarPreloader');
+const sessionManager = require('../../services/sessionManager');
 
 // Caller identification and greeting node
 const greetingNode = RunnableLambda.from(async (state) => {
@@ -57,6 +59,15 @@ const greetingNode = RunnableLambda.from(async (state) => {
     } else {
       console.log('⚠️ No phone number provided');
       phoneNumber = "Unknown";
+    }
+    
+    // Start calendar preloading immediately in background
+    if (callerInfo && state.streamSid) {
+      console.log('📅 Starting calendar preload for auto-greeting');
+      sessionManager.setCallerInfo(state.streamSid, callerInfo);
+      calendarPreloader.startPreloading(state.streamSid, callerInfo).catch(error => {
+        console.warn('Calendar preload failed during auto-greeting:', error.message);
+      });
     }
     
     // Generate personalized greeting
@@ -135,6 +146,15 @@ const greetingNode = RunnableLambda.from(async (state) => {
   } else {
     console.log('⚠️ No phone number provided from Twilio');
     phoneNumber = "Unknown";
+  }
+  
+  // Start calendar preloading immediately in background
+  if (callerInfo && state.streamSid) {
+    console.log('📅 Starting calendar preload for normal greeting');
+    sessionManager.setCallerInfo(state.streamSid, callerInfo);
+    calendarPreloader.startPreloading(state.streamSid, callerInfo).catch(error => {
+      console.warn('Calendar preload failed during normal greeting:', error.message);
+    });
   }
   
   // Generate personalized greeting using OpenAI with language support

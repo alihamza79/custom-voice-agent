@@ -6,13 +6,18 @@
 const { ChatOpenAI } = require("@langchain/openai");
 const { HumanMessage, AIMessage, SystemMessage } = require("@langchain/core/messages");
 const { createCalendarTools } = require('./calendarTools');
+const { createAppointmentTimer } = require('../../utils/appointmentTimingLogger');
 
 /**
  * Generate response node - handles LLM interactions
  * Following the Python pattern for generate_response
  */
 async function generateResponse(state, config = {}) {
+  const timer = createAppointmentTimer(config.configurable?.streamSid);
+  timer.checkpoint('generate_response_start', 'Starting LLM response generation');
+  
   try {
+    timer.checkpoint('import_services', 'Importing required services');
     // Import service
     const sessionManager = require('../../services/sessionManager');
     
@@ -24,15 +29,21 @@ async function generateResponse(state, config = {}) {
     if (!streamSid) {
       throw new Error("StreamSid required for appointment workflow");
     }
+    timer.checkpoint('config_validated', 'Configuration validated', { streamSid: streamSid?.substring(0, 8) });
 
+    timer.checkpoint('session_data_load', 'Loading session data and caller info');
     // Get session data
     const session = sessionManager.getSession(streamSid);
     const callerInfo = session?.callerInfo || {};
     const language = session?.language || 'english';
+    timer.checkpoint('session_data_loaded', 'Session data loaded', { callerName: callerInfo.name });
 
+    timer.checkpoint('tools_creation_start', 'Creating calendar tools for session');
     // Create tools for this session
     const tools = await createCalendarTools(streamSid);
+    timer.checkpoint('tools_created', 'Calendar tools created', { toolCount: tools.length });
 
+    timer.checkpoint('llm_init_start', 'Initializing OpenAI LLM with tools');
     // Initialize LLM with tools
     const model = new ChatOpenAI({
       modelName: config.model || "gpt-4o",
@@ -40,7 +51,9 @@ async function generateResponse(state, config = {}) {
       maxTokens: config.maxTokens || 300,
       streaming: false
     }).bindTools(tools);
+    timer.checkpoint('llm_initialized', 'LLM initialized and tools bound');
 
+    timer.checkpoint('context_build_start', 'Building appointment context for prompt');
     // Get appointment context if available
     let appointmentContext = '';
     if (session?.preloadedAppointments?.length > 0) {
@@ -55,6 +68,7 @@ async function generateResponse(state, config = {}) {
       }).join('\n');
       appointmentContext = `\n\n📅 CURRENT APPOINTMENTS:\n${appointmentList}\n\n`;
     }
+    timer.checkpoint('context_built', 'Appointment context prepared', { appointmentCount: session?.preloadedAppointments?.length || 0 });
 
     // System prompt for appointment shifting/canceling workflow
     const systemPrompt = `You are an intelligent appointment assistant helping ${callerInfo.name || 'the caller'} manage their existing appointments.
@@ -101,18 +115,23 @@ Current date/time: ${new Date().toISOString()}`;
     // Create system message
     const systemMessage = new SystemMessage(systemPrompt);
 
+    timer.checkpoint('prompt_prep', 'Preparing messages for LLM invocation');
     // Prepare messages for model
     const modelMessages = [systemMessage, ...messages];
+    timer.checkpoint('prompt_ready', 'Messages prepared for model', { messageCount: modelMessages.length });
 
+    timer.checkpoint('llm_invoke_start', 'Invoking OpenAI LLM');
     // Get response from model
     const response = await model.invoke(modelMessages);
+    timer.checkpoint('llm_invoke_complete', 'LLM response received', { hasToolCalls: !!response.tool_calls?.length });
 
+    timer.checkpoint('generate_response_complete', 'Response generation completed successfully');
     return {
       messages: [response]
     };
 
   } catch (error) {
-    console.error('Error in generateResponse:', error);
+    timer.checkpoint('generate_response_error', 'Error in response generation', { error: error.message });
     
     // Return error message
     const errorMessage = new AIMessage({
@@ -160,27 +179,36 @@ function toolsCondition(state) {
  * Following the ToolNode pattern from Python implementation
  */
 async function executeTools(state, config = {}) {
+  const timer = createAppointmentTimer(config.configurable?.streamSid);
+  timer.checkpoint('execute_tools_start', 'Starting tool execution');
+  
   try {
     const messages = state.messages || [];
     const lastMessage = messages[messages.length - 1];
     
     if (!lastMessage?.tool_calls?.length) {
+      timer.checkpoint('no_tools', 'No tool calls to execute');
       return { messages: [] };
     }
 
+    timer.checkpoint('tools_setup_start', 'Setting up tools for execution');
     const streamSid = config.configurable?.streamSid;
     const tools = await createCalendarTools(streamSid);
     const toolMap = {};
     tools.forEach(tool => toolMap[tool.name] = tool);
+    timer.checkpoint('tools_setup_complete', 'Tools mapped and ready', { toolCount: tools.length, callCount: lastMessage.tool_calls.length });
 
+    timer.checkpoint('tool_execution_start', 'Beginning tool execution loop');
     const toolMessages = [];
 
     for (const toolCall of lastMessage.tool_calls) {
       const { name, args, id } = toolCall;
+      timer.checkpoint(`tool_${name}_start`, `Executing tool: ${name}`, { args });
       
       if (toolMap[name]) {
         try {
           const result = await toolMap[name].invoke(args);
+          timer.checkpoint(`tool_${name}_complete`, `Tool ${name} completed successfully`, { resultLength: result?.length || 0 });
           toolMessages.push({
             type: "tool",
             content: result,
@@ -188,7 +216,7 @@ async function executeTools(state, config = {}) {
             name: name
           });
         } catch (error) {
-          console.error(`Error executing tool ${name}:`, error);
+          timer.checkpoint(`tool_${name}_error`, `Tool ${name} execution failed`, { error: error.message });
           toolMessages.push({
             type: "tool",
             content: `Error executing ${name}: ${error.message}`,
@@ -197,6 +225,7 @@ async function executeTools(state, config = {}) {
           });
         }
       } else {
+        timer.checkpoint(`tool_${name}_unknown`, `Unknown tool requested: ${name}`);
         toolMessages.push({
           type: "tool",
           content: `Unknown tool: ${name}`,
@@ -206,12 +235,13 @@ async function executeTools(state, config = {}) {
       }
     }
 
+    timer.checkpoint('execute_tools_complete', 'All tools executed successfully', { messageCount: toolMessages.length });
     return {
       messages: toolMessages
     };
 
   } catch (error) {
-    console.error('Error in executeTools:', error);
+    timer.checkpoint('execute_tools_error', 'Error in tool execution', { error: error.message });
     return {
       messages: [{
         type: "tool",

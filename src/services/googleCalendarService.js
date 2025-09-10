@@ -6,6 +6,8 @@ require('dotenv').config();
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
+const chalk = require('chalk');
+const { createAppointmentTimer } = require('../utils/appointmentTimingLogger');
 
 class GoogleCalendarService {
   constructor() {
@@ -66,44 +68,57 @@ class GoogleCalendarService {
 
   // Get cached appointments or fetch fresh data
   async getAppointments(callerInfo, forceRefresh = false) {
+    const timer = createAppointmentTimer(`calendar_${callerInfo.phoneNumber}`);
+    timer.checkpoint('calendar_service_start', 'Starting Google Calendar service request', { forceRefresh });
+    
     const cacheKey = `${callerInfo.phoneNumber}_${callerInfo.name}`;
     const now = Date.now();
 
+    timer.checkpoint('cache_check_start', 'Checking appointment cache');
     // Return cached data if valid and not forcing refresh
     if (!forceRefresh && this.appointmentCache.has(cacheKey)) {
       const cached = this.appointmentCache.get(cacheKey);
       if (now - cached.timestamp < this.cacheExpiry) {
-        console.log('📅 Using cached calendar data');
+        timer.checkpoint('cache_hit', 'Using cached calendar data', { age: now - cached.timestamp });
+        console.log(`⚡ GOOGLE CACHE HIT: ${cached.data?.length || 0} appointments from cache`);
         return cached.data;
       }
     }
+    timer.checkpoint('cache_miss', 'Cache miss or force refresh, fetching fresh data');
+    console.log(`🔄 GOOGLE API FETCH: Force refresh=${forceRefresh}, Cache expired or missing`);
 
     // Fetch fresh data
-    console.log('📅 Fetching fresh calendar data...');
     const appointments = await this.fetchAppointmentsFromCalendar(callerInfo);
 
+    timer.checkpoint('cache_store_start', 'Storing fresh data in cache');
     // Cache the results
     this.appointmentCache.set(cacheKey, {
       data: appointments,
       timestamp: now
     });
+    timer.checkpoint('cache_store_complete', 'Data cached successfully');
 
+    timer.checkpoint('calendar_service_complete', 'Google Calendar service completed', { appointmentCount: appointments.length });
     return appointments;
   }
 
   // Fetch appointments from Google Calendar with optimized query and retry logic
   async fetchAppointmentsFromCalendar(callerInfo) {
+    const timer = createAppointmentTimer(`google_api_${callerInfo.phoneNumber}`);
+    
     return this.executeWithRetry(async () => {
+      timer.checkpoint('google_api_start', 'Starting Google Calendar API call');
+      
       if (!this.isAuthenticated) {
         throw new Error('Google Calendar service not authenticated');
       }
 
-      const startTime = Date.now();
-
+      timer.checkpoint('query_preparation', 'Preparing Calendar API query parameters');
       // Query for upcoming events (next 90 days for better coverage)
       const timeMin = new Date().toISOString();
       const timeMax = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
 
+      timer.checkpoint('api_call_start', 'Making Google Calendar API request');
       // Parallel API calls for better performance
       const [eventsResponse] = await Promise.all([
         this.calendar.events.list({
@@ -116,10 +131,9 @@ class GoogleCalendarService {
           // q: callerInfo.name || callerInfo.phoneNumber // Search by name or phone (optional)
         })
       ]);
+      timer.checkpoint('api_call_complete', 'Google Calendar API response received', { eventCount: eventsResponse.data.items?.length || 0 });
 
-      const processingTime = Date.now() - startTime;
-      console.log(`📅 Calendar fetch completed in ${processingTime}ms`);
-
+      timer.checkpoint('data_transform_start', 'Transforming Google Calendar events to our format');
       // Transform Google Calendar events to our format
       const appointments = eventsResponse.data.items.map(event => ({
         id: event.id,
@@ -137,6 +151,7 @@ class GoogleCalendarService {
         location: event.location || '',
         attendees: event.attendees || []
       }));
+      timer.checkpoint('data_transform_complete', 'Data transformation completed', { appointmentCount: appointments.length });
 
       return appointments;
     }, 'fetchAppointments');
@@ -252,25 +267,29 @@ class GoogleCalendarService {
 
   // Update existing appointment with retry logic
   async updateAppointment(eventId, updateData) {
+    const timer = createAppointmentTimer(`update_${eventId}`);
+    
     return this.executeWithRetry(async () => {
+      timer.checkpoint('update_start', 'Starting appointment update', { eventId });
+      
       if (!this.isAuthenticated) {
         throw new Error('Google Calendar service not authenticated');
       }
 
-      const startTime = Date.now();
-
+      timer.checkpoint('api_update_start', 'Making Google Calendar update API call');
       const response = await this.calendar.events.patch({
         calendarId: this.calendarId,
         eventId: eventId,
         resource: updateData
       });
+      timer.checkpoint('api_update_complete', 'Google Calendar update API call completed');
 
-      const processingTime = Date.now() - startTime;
-      console.log(`📅 Appointment updated in ${processingTime}ms`);
-
+      timer.checkpoint('cache_invalidate_start', 'Invalidating appointment cache');
       // Invalidate cache
       this.invalidateCache();
+      timer.checkpoint('cache_invalidate_complete', 'Cache invalidated');
 
+      timer.checkpoint('update_complete', 'Appointment update completed successfully');
       return {
         id: response.data.id,
         summary: response.data.summary,
@@ -283,24 +302,28 @@ class GoogleCalendarService {
 
   // Cancel/delete appointment with retry logic
   async cancelAppointment(eventId) {
+    const timer = createAppointmentTimer(`cancel_${eventId}`);
+    
     return this.executeWithRetry(async () => {
+      timer.checkpoint('cancel_start', 'Starting appointment cancellation', { eventId });
+      
       if (!this.isAuthenticated) {
         throw new Error('Google Calendar service not authenticated');
       }
 
-      const startTime = Date.now();
-
+      timer.checkpoint('api_cancel_start', 'Making Google Calendar delete API call');
       await this.calendar.events.delete({
         calendarId: this.calendarId,
         eventId: eventId
       });
+      timer.checkpoint('api_cancel_complete', 'Google Calendar delete API call completed');
 
-      const processingTime = Date.now() - startTime;
-      console.log(`📅 Appointment cancelled in ${processingTime}ms`);
-
+      timer.checkpoint('cache_invalidate_start', 'Invalidating appointment cache');
       // Invalidate cache
       this.invalidateCache();
+      timer.checkpoint('cache_invalidate_complete', 'Cache invalidated');
 
+      timer.checkpoint('cancel_complete', 'Appointment cancellation completed successfully');
       return { status: 'cancelled', eventId };
     }, 'cancelAppointment');
   }

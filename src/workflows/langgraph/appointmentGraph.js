@@ -7,6 +7,8 @@ const { StateGraph, START, END } = require("@langchain/langgraph");
 const { HumanMessage } = require("@langchain/core/messages");
 const { AppointmentAgentState, AppointmentConfiguration } = require('./state');
 const { generateResponse, executeTools, toolsCondition } = require('./nodes');
+const { createAppointmentTimer } = require('../../utils/appointmentTimingLogger');
+const fillerResponseService = require('../../services/fillerResponseService');
 
 /**
  * Create the appointment workflow graph
@@ -89,14 +91,16 @@ class LangGraphAppointmentWorkflow {
    * Optimized for low latency
    */
   async processUserInput(streamSid, userInput, sendFillerCallback = null) {
-    const startTime = Date.now();
-    console.log(`🎯 Processing with LangGraph: "${userInput}"`);
+    const timer = createAppointmentTimer(streamSid);
+    timer.checkpoint('workflow_start', 'Starting LangGraph appointment workflow', { userInput: userInput.substring(0, 50) });
 
     try {
+      timer.checkpoint('session_lookup', 'Looking up session configuration');
       // Get session configuration
       let sessionData = this.sessions.get(streamSid);
       
       if (!sessionData) {
+        timer.checkpoint('session_init_start', 'Session not found, initializing new session');
         // Dynamic import for ES modules
         const { default: sessionManager } = await import('../../services/sessionManager.js');
         
@@ -109,22 +113,27 @@ class LangGraphAppointmentWorkflow {
         
         const config = await this.initializeSession(streamSid, callerInfo);
         sessionData = this.sessions.get(streamSid);
+        timer.checkpoint('session_init_complete', 'Session initialization completed');
       }
 
       // Update last activity
       sessionData.lastActivity = new Date();
 
-      // Send contextual filler if callback provided
+      // Send immediate filler and start sequence for long operations
       if (sendFillerCallback) {
-        const contextualFiller = this.getContextualFiller(userInput);
-        sendFillerCallback(contextualFiller);
+        timer.checkpoint('filler_start', 'Starting filler response sequence');
+        const context = this.getFillerContext(userInput);
+        fillerResponseService.sendImmediateFiller(streamSid, context, sendFillerCallback, true);
       }
 
+      timer.checkpoint('context_load', 'Loading conversation history from session');
       // Get conversation history from session
       const sessionManager = require('../../services/sessionManager');
       const session = sessionManager.getSession(streamSid);
       const existingMessages = session?.workingMemory?.conversationMessages || [];
+      timer.checkpoint('context_loaded', 'Conversation history loaded', { messageCount: existingMessages.length });
       
+      timer.checkpoint('message_prep', 'Preparing input state for LangGraph');
       // Create new message
       const newMessage = new HumanMessage({
         content: userInput,
@@ -136,83 +145,85 @@ class LangGraphAppointmentWorkflow {
         messages: [...existingMessages, newMessage]
       };
 
+      timer.checkpoint('langgraph_invoke_start', 'Starting LangGraph execution');
       // Execute the graph with optimized settings
-      console.log('🔄 Executing LangGraph workflow...');
       const result = await this.graph.invoke(inputState, {
         ...sessionData.config,
         recursionLimit: 10, // Limit recursion for latency
         streamMode: "values"
       });
+      timer.checkpoint('langgraph_invoke_complete', 'LangGraph execution completed');
+      
+      // Stop any active filler sequences
+      fillerResponseService.stopFillerSequence(streamSid);
 
-      const processingTime = Date.now() - startTime;
+      timer.checkpoint('result_processing', 'Processing LangGraph result');
       
       // Extract response from result
       const messages = result.messages || [];
       const lastMessage = messages[messages.length - 1];
       const response = lastMessage?.content || "I'm sorry, I couldn't process that request.";
+      timer.checkpoint('response_extracted', 'Response extracted from result', { responseLength: response.length });
 
       // Check if workflow should end
       const shouldEndCall = this.shouldEndCall(result, response);
+      timer.checkpoint('end_call_check', 'End call decision made', { shouldEndCall });
 
-      console.log(`🔍 DEBUG endCall decision: shouldEndCall=${shouldEndCall}, response="${response.substring(0, 50)}"`);
-      console.log(`🤖 LangGraph Response (${processingTime}ms): ${response.substring(0, 100)}...`);
-
+      timer.checkpoint('session_save_start', 'Saving conversation history to session');
       // Save conversation history to session for context continuity
       const allMessages = result.messages || [];
       sessionManager.updateSession(streamSid, {
         workingMemory: {
           ...session?.workingMemory,
           conversationMessages: allMessages,
-          lastActivity: new Date(),
-          processingTime: processingTime
+          lastActivity: new Date()
         }
       });
+      timer.checkpoint('session_save_complete', 'Session saved successfully');
+
+      const summary = timer.getSummary();
+      timer.checkpoint('workflow_complete', 'Appointment workflow completed successfully', { totalTime: summary.totalTime });
+      timer.printSummary();
 
       return {
         response: response,
         endCall: shouldEndCall,
         sessionComplete: shouldEndCall,
-        processingTime: processingTime,
+        processingTime: summary.totalTime,
         streamSid: streamSid,
-        toolCalls: lastMessage?.tool_calls || []
+        toolCalls: lastMessage?.tool_calls || [],
+        timingData: summary
       };
 
     } catch (error) {
-      const processingTime = Date.now() - startTime;
-      console.error(`❌ LangGraph processing error (${processingTime}ms):`, error);
+      timer.checkpoint('workflow_error', 'Error in appointment workflow', { error: error.message });
+      timer.printSummary();
 
       return {
         response: "I understand you want to manage your appointments. Let me help you with that.",
         endCall: false,
         error: true,
-        processingTime: processingTime,
-        streamSid: streamSid
+        processingTime: timer.getSummary().totalTime,
+        streamSid: streamSid,
+        timingData: timer.getSummary()
       };
     }
   }
 
   /**
-   * Get contextual filler based on user input
+   * Get filler context based on user input
    */
-  getContextualFiller(userInput) {
+  getFillerContext(userInput) {
     const input = userInput.toLowerCase();
     
-    if (input.includes('shift') || input.includes('change') || input.includes('move')) {
-      const fillers = [
-        "Let me check your appointments",
-        "Looking at your schedule",
-        "Checking available times"
-      ];
-      return fillers[Math.floor(Math.random() * fillers.length)];
-    } else if (input.includes('cancel') || input.includes('delete')) {
-      const fillers = [
-        "Let me find that appointment",
-        "Checking your bookings",
-        "Looking for that meeting"
-      ];
-      return fillers[Math.floor(Math.random() * fillers.length)];
+    if (input.includes('shift') || input.includes('change') || input.includes('move') || input.includes('reschedule')) {
+      return 'appointment_shift';
+    } else if (input.includes('cancel') || input.includes('delete') || input.includes('remove')) {
+      return 'appointment_cancel';
+    } else if (input.includes('appointment') || input.includes('meeting') || input.includes('schedule')) {
+      return 'calendar_fetch';
     } else {
-      return "One moment please";
+      return 'llm_processing';
     }
   }
 
