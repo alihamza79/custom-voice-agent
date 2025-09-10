@@ -5,6 +5,7 @@ const { setupSTTListeners } = require('../handlers/sttEventHandlers');
 const { clearGreetingHistory } = require('../handlers/greetingHandler');
 const languageStateService = require('../services/languageStateService');
 const sessionManager = require('../services/sessionManager');
+const ttsPrewarmer = require('../services/ttsPrewarmer');
 const { getGreetingLanguage, getDeepgramLanguage } = require('../utils/languageDetection');
 const { globalTimingLogger } = require('../utils/timingLogger');
 
@@ -238,6 +239,11 @@ class MediaStream {
           }
           
           globalTimingLogger.logMoment('Caller information extracted');
+          
+          // 🔥 Trigger TTS prewarming for instant response
+          ttsPrewarmer.triggerPrewarm().catch(error => {
+            console.warn('⚠️ TTS prewarming failed on call start:', error.message);
+          });
           
           // Initialize global language state for this call
           languageStateService.initializeCall(this.streamSid, 'english');

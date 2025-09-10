@@ -20,6 +20,7 @@ const deepgramSTTService = require('./services/deepgramSTTService');
 const whatsappService = require('./services/whatsappService');
 const dbManager = require('./services/databaseConnection');
 const sessionManager = require('./services/sessionManager');
+const ttsPrewarmer = require('./services/ttsPrewarmer');
 
 // Models
 const MediaStream = require('./models/MediaStream');
@@ -241,6 +242,9 @@ wsserver.listen(HTTP_SERVER_PORT, async function () {
   // Initialize Azure TTS streaming at startup
   await azureTTSService.initialize();
 
+  // Initialize TTS prewarmer for instant response
+  await ttsPrewarmer.initialize();
+
   // Initialize database connection for audit logging
   try {
     await dbManager.getConnection();
@@ -273,6 +277,15 @@ setInterval(() => {
     azureTTSService.initialize();
   }
   
+  // Check TTS prewarmer status and retrigger if needed
+  const prewarmerStatus = ttsPrewarmer.getStatus();
+  if (!prewarmerStatus.isPrewarmed || !prewarmerStatus.hasActiveSynthesizer) {
+    console.log('🔥 TTS PREWARMER: Health check - retriggering warmup');
+    ttsPrewarmer.triggerPrewarm().catch(error => {
+      console.warn('⚠️ TTS prewarmer health check failed:', error.message);
+    });
+  }
+  
   // Get STT connection stats
   const sttStats = deepgramSTTService.getConnectionStats();
   
@@ -287,6 +300,9 @@ process.on('SIGINT', () => {
   // Close SSE connections
   sseService.closeAll();
   
+  // Cleanup TTS prewarmer
+  ttsPrewarmer.cleanup();
+  
   // Reset global state and cleanup resources
   resetGlobalState();
   
@@ -299,6 +315,9 @@ process.on('SIGINT', () => {
 process.on('SIGTERM', () => {
   // Close SSE connections
   sseService.closeAll();
+  
+  // Cleanup TTS prewarmer
+  ttsPrewarmer.cleanup();
   
   // Reset global state and cleanup resources
   resetGlobalState();

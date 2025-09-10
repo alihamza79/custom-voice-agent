@@ -108,7 +108,7 @@ async function processUtterance(utterance, mediaStream) {
       
       // Set up immediate feedback mechanism for tools - keep it active for entire session
       const immediateResponsePromise = new Promise((resolve) => {
-        const timeoutId = setTimeout(() => resolve(null), 5000); // Increased timeout to 5 seconds
+        const timeoutId = setTimeout(() => resolve(null), 1000); // Reduced to 1 second for faster STT
         sessionManager.setImmediateCallback(mediaStream.streamSid, (response) => {
           clearTimeout(timeoutId);
           resolve(response);
@@ -119,55 +119,75 @@ async function processUtterance(utterance, mediaStream) {
       // This ensures filler words work throughout the session
       sessionManager.setImmediateCallback(mediaStream.streamSid, persistentFillerCallback);
       
-      const [graphResult, immediateResponse] = await Promise.allSettled([
-        runCallerIdentificationGraph({ 
-          transcript: utterance, 
-          streamSid: mediaStream.threadId,
-          phoneNumber: mediaStream.callerNumber,
-          callSid: mediaStream.callSid,
-          language: mediaStream.language,
-          from: mediaStream.callerNumber
-        }),
-        immediateResponsePromise
-      ]);
+      // 🚀 PERFORMANCE OPTIMIZATION: Start TTS immediately when graph completes
+      let actualGraphResult = null;
+      let ttsStarted = false;
       
-      // Handle immediate feedback if available - DISABLED (now handled directly in customerIntentNode)
-      if (immediateResponse.status === 'fulfilled' && immediateResponse.value) {
-        console.log('ℹ️ Immediate feedback received but already handled in customerIntentNode:', immediateResponse.value);
-      } else {
-        console.log('ℹ️ No immediate feedback received or timeout occurred');
-      }
+      // Start graph execution and immediate response in parallel
+      const graphPromise = runCallerIdentificationGraph({ 
+        transcript: utterance, 
+        streamSid: mediaStream.threadId,
+        phoneNumber: mediaStream.callerNumber,
+        callSid: mediaStream.callSid,
+        language: mediaStream.language,
+        from: mediaStream.callerNumber
+      });
       
-      // Keep callback active for the entire session - don't clear it
-      // setTimeout(() => {
-      //   sessionManager.setImmediateCallback(mediaStream.streamSid, null);
-      // }, 30000);
-      
-      const actualGraphResult = graphResult.status === 'fulfilled' ? graphResult.value : null;
-      
-      // Process intent classification result
-      if (actualGraphResult && actualGraphResult.systemPrompt) {
-        globalTimingLogger.logModelOutput(actualGraphResult.systemPrompt, 'INTENT RESPONSE');
+      // Start TTS immediately when graph resolves
+      const ttsPromise = graphPromise.then(async (result) => {
+        if (result && result.systemPrompt && !ttsStarted) {
+          ttsStarted = true;
+          actualGraphResult = result;
+          
+          globalTimingLogger.logModelOutput(result.systemPrompt, 'INTENT RESPONSE');
+          
+          // 🔥 Trigger immediate TTS prewarming
+          const ttsPrewarmer = require('../services/ttsPrewarmer');
+          ttsPrewarmer.triggerPrewarm().catch(() => {}); // Don't wait, just trigger
+          
+          // Set up MediaStream for TTS immediately
+          mediaStream.currentMediaStream = mediaStream;
+          mediaStream.speaking = true;
+          mediaStream.ttsStart = Date.now();
+          mediaStream.firstByte = true;
         
-        // Set up MediaStream for TTS
-        mediaStream.currentMediaStream = mediaStream;
-        mediaStream.speaking = true;
-        mediaStream.ttsStart = Date.now();
-        mediaStream.firstByte = true;
-      
-        try {
-          globalTimingLogger.startOperation('Response TTS');
-          await azureTTSService.synthesizeStreaming(
-            actualGraphResult.systemPrompt,
-            mediaStream,
-            mediaStream.language
-          );
-          globalTimingLogger.endOperation('Response TTS');
-        } catch (error) {
-          globalTimingLogger.logError(error, 'Response TTS');
+          try {
+            globalTimingLogger.startOperation('Response TTS');
+            await azureTTSService.synthesizeStreaming(
+              result.systemPrompt,
+              mediaStream,
+              mediaStream.language
+            );
+            globalTimingLogger.endOperation('Response TTS');
+          } catch (error) {
+            globalTimingLogger.logError(error, 'Response TTS');
+          }
+          
+          return result;
         }
+      }).catch((error) => {
+        globalTimingLogger.logError(error, 'Immediate TTS');
+        return null;
+      });
+      
+      // Handle immediate feedback in parallel (but don't wait for it)
+      const immediatePromise = immediateResponsePromise;
+      immediatePromise.then((response) => {
+        if (response) {
+          console.log('ℹ️ Immediate feedback received but already handled in customerIntentNode:', response);
+        } else {
+          console.log('ℹ️ No immediate feedback received or timeout occurred');
+        }
+      }).catch(() => {
+        console.log('ℹ️ No immediate feedback received or timeout occurred');
+      });
+      
+      // 🚀 Don't wait for immediate promise - it has a 5s timeout that blocks STT
+      // Just wait for TTS to complete, let immediate promise resolve in background
+      await ttsPromise;
         
-        // Broadcast intent classification result
+      // Broadcast intent classification result if available
+      if (actualGraphResult) {
         sseService.broadcast('intent_classified', { 
           streamSid: mediaStream.streamSid,
           callerNumber: mediaStream.callerNumber,
