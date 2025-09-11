@@ -2,7 +2,6 @@
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 const { DEEPGRAM_API_KEY } = require('../config/environment');
 const { MAX_CONCURRENT_STT, CONNECTION_COOLDOWN } = require('../config/constants');
-const { globalTimingLogger } = require('../utils/timingLogger');
 
 class DeepgramSTTService {
   constructor() {

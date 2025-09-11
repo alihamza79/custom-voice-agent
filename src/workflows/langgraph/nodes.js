@@ -8,6 +8,10 @@ const { HumanMessage, AIMessage, SystemMessage } = require("@langchain/core/mess
 const { createCalendarTools } = require('./calendarTools');
 const { createAppointmentTimer } = require('../../utils/appointmentTimingLogger');
 
+// Global cache for tools and models to reduce initialization overhead
+const toolCache = new Map();
+const modelCache = new Map();
+
 /**
  * Generate response node - handles LLM interactions
  * Following the Python pattern for generate_response
@@ -39,19 +43,32 @@ async function generateResponse(state, config = {}) {
     timer.checkpoint('session_data_loaded', 'Session data loaded', { callerName: callerInfo.name });
 
     timer.checkpoint('tools_creation_start', 'Creating calendar tools for session');
-    // Create tools for this session
-    const tools = await createCalendarTools(streamSid);
-    timer.checkpoint('tools_created', 'Calendar tools created', { toolCount: tools.length });
+    // Use cached tools or create new ones
+    let tools = toolCache.get('calendar_tools');
+    if (!tools) {
+      tools = await createCalendarTools(streamSid);
+      toolCache.set('calendar_tools', tools);
+      timer.checkpoint('tools_created_cached', 'Calendar tools created and cached', { toolCount: tools.length });
+    } else {
+      timer.checkpoint('tools_cache_hit', 'Using cached calendar tools', { toolCount: tools.length });
+    }
 
     timer.checkpoint('llm_init_start', 'Initializing OpenAI LLM with tools');
-    // Initialize LLM with tools
-    const model = new ChatOpenAI({
-      modelName: config.model || "gpt-4o",
-      temperature: config.temperature || 0.7,
-      maxTokens: config.maxTokens || 300,
-      streaming: false
-    }).bindTools(tools);
-    timer.checkpoint('llm_initialized', 'LLM initialized and tools bound');
+    // Use cached model or create new one with optimized settings
+    const modelKey = `${config.model || "gpt-4o-mini"}_${config.temperature || 0.3}_${config.maxTokens || 200}`;
+    let model = modelCache.get(modelKey);
+    if (!model) {
+      model = new ChatOpenAI({
+        modelName: config.model || "gpt-4o-mini",
+        temperature: config.temperature || 0.3, // Lower for consistency and speed
+        maxTokens: config.maxTokens || 200,     // Reduced from 300 for faster responses
+        streaming: true                         // Enable streaming for immediate response start
+      }).bindTools(tools);
+      modelCache.set(modelKey, model);
+      timer.checkpoint('llm_created_cached', 'LLM created and cached with streaming enabled');
+    } else {
+      timer.checkpoint('llm_cache_hit', 'Using cached LLM model');
+    }
 
     timer.checkpoint('context_build_start', 'Building appointment context for prompt');
     // Get appointment context if available
@@ -70,65 +87,217 @@ async function generateResponse(state, config = {}) {
     }
     timer.checkpoint('context_built', 'Appointment context prepared', { appointmentCount: session?.preloadedAppointments?.length || 0 });
 
-    // System prompt for appointment shifting/canceling workflow
-    const systemPrompt = `You are an intelligent appointment assistant helping ${callerInfo.name || 'the caller'} manage their existing appointments.
+    // Optimized system prompt for faster processing while maintaining functionality
+    const systemPrompt = `You help ${callerInfo.name || 'caller'} manage appointments.
 
-🎯 YOUR ROLE: Help shift or cancel existing appointments through natural conversation.
+WORKFLOW:
+1. User wants changes → call get_appointments first
+2. User specifies appointment → ask for new details
+3. User confirms → execute shift_appointment/cancel_appointment immediately
 
-🔥 CRITICAL WORKFLOW:
-1. When user wants to modify appointments → IMMEDIATELY call get_appointments to show current appointments
-2. When user specifies an appointment → Match it to the list and ask for new date/time details (for shifting)
-3. When you have all details → ALWAYS confirm with user before calling shift_appointment or cancel_appointment
-4. When user confirms (says "yes", "correct", "that's right", etc.) → IMMEDIATELY execute the appropriate tool
-5. NEVER make changes without explicit confirmation
+RULES:
+- Be direct, ask ONE question at a time
+- ALWAYS confirm before making changes
+- Recognize confirmations: "yes", "correct", "do it", "go ahead"
+- Execute immediately after confirmation
 
-🧠 CONVERSATION RULES:
-- Be direct and helpful
-- Ask ONE question at a time
-- Use the appointment data to match user requests
-- ALWAYS confirm changes before executing
-- When user confirms, execute the action immediately
-- Recognize confirmations: "yes", "correct", "that's right", "do it", "go ahead", etc.
-- If unclear, ask for clarification
+TOOLS: get_appointments, shift_appointment, cancel_appointment, end_call
 
-🛠️ AVAILABLE TOOLS:
-- get_appointments: Show current appointments (call first)
-- shift_appointment: Move appointment to new date/time (requires confirmation)
-- cancel_appointment: Cancel an appointment (requires confirmation)
-- end_call: End conversation when complete
+APPOINTMENTS:${appointmentContext}
 
-📅 APPOINTMENT CONTEXT:${appointmentContext}
+FORMAT: Use ISO dates (YYYY-MM-DDTHH:mm:ssZ), set confirmationReceived=true when confirmed.
 
-⚡ TOOL CALLING EXAMPLES:
-When user confirms shifting "Ali Test appointment" to Friday Sept 12 at 4PM:
-- Call shift_appointment with: appointmentName="Ali Test appointment", newDateTime="2025-09-12T16:00:00Z", confirmationReceived=true
-
-IMPORTANT: 
-- Only work with existing appointments. You cannot create new appointments.
-- When user confirms an action, execute it immediately using the appropriate tool
-- For shift_appointment tool, always set confirmationReceived=true when user has confirmed
-- Use ISO format for dates: YYYY-MM-DDTHH:mm:ssZ
-- Extract appointment name from the appointment list above
-
-Current date/time: ${new Date().toISOString()}`;
+Now: ${new Date().toISOString()}`;
 
     // Create system message
     const systemMessage = new SystemMessage(systemPrompt);
 
     timer.checkpoint('prompt_prep', 'Preparing messages for LLM invocation');
-    // Prepare messages for model
-    const modelMessages = [systemMessage, ...messages];
-    timer.checkpoint('prompt_ready', 'Messages prepared for model', { messageCount: modelMessages.length });
+    // Limit context window for faster processing (keep last 6 messages + system)
+    const recentMessages = messages.slice(-6);
+    const modelMessages = [systemMessage, ...recentMessages];
+    timer.checkpoint('prompt_ready', 'Messages prepared for model', { 
+      messageCount: modelMessages.length, 
+      contextLimited: messages.length > 6 
+    });
 
-    timer.checkpoint('llm_invoke_start', 'Invoking OpenAI LLM');
-    // Get response from model
-    const response = await model.invoke(modelMessages);
-    timer.checkpoint('llm_invoke_complete', 'LLM response received', { hasToolCalls: !!response.tool_calls?.length });
+    timer.checkpoint('llm_invoke_start', 'Invoking OpenAI LLM with streaming');
+    
+      // Check if we have MediaStream available for real-time TTS
+      const mediaStream = sessionManager.getMediaStream(streamSid);
+      
+      if (mediaStream && config.enableStreaming === true) {
+        // Stream response with real-time TTS
+        timer.checkpoint('llm_streaming_start', 'Starting LLM streaming with real-time TTS');
+        
+        try {
+          const azureTTSService = require('../../services/azureTTSService');
+          let accumulatedContent = '';
+          let isFirstChunk = true;
+          let hasToolCalls = false;
+          let toolCalls = [];
+          
+          // Convert messages to proper format for streaming
+          const streamingMessages = modelMessages.map(msg => {
+            if (msg.constructor.name === 'SystemMessage' || msg.constructor.name === 'HumanMessage' || msg.constructor.name === 'AIMessage') {
+              return msg;
+            }
+            // Convert plain objects to proper message format
+            if (msg.type === 'system') {
+              return new SystemMessage(msg.content);
+            } else if (msg.type === 'human' || msg.name === 'user') {
+              return new HumanMessage({ content: msg.content, name: msg.name });
+            } else if (msg.type === 'ai' || msg.name === 'assistant') {
+              const aiMsg = new AIMessage({ content: msg.content, name: msg.name });
+              if (msg.tool_calls) {
+                aiMsg.tool_calls = msg.tool_calls;
+              }
+              return aiMsg;
+            }
+            return msg;
+          });
+          
+          // Start streaming
+          const stream = await model.stream(streamingMessages);
+          
+          for await (const chunk of stream) {
+            if (chunk.content) {
+              accumulatedContent += chunk.content;
+              
+              // Handle first chunk immediately for low latency
+              if (isFirstChunk) {
+                timer.checkpoint('first_chunk', 'First LLM chunk received');
+                mediaStream.speaking = true;
+                mediaStream.ttsStart = Date.now();
+                mediaStream.firstByte = true;
+                isFirstChunk = false;
+              }
+              
+              // Detect complete sentences and start TTS immediately
+              const sentences = extractCompleteSentences(accumulatedContent);
+              for (const sentence of sentences.complete) {
+                if (sentence.trim()) {
+                  timer.checkpoint('sentence_streaming', 'Streaming sentence to TTS', { sentenceLength: sentence.length });
+                  
+                  // Start TTS for this sentence immediately (don't await)
+                  azureTTSService.synthesizeStreaming(
+                    sentence,
+                    mediaStream,
+                    sessionManager.getSession(streamSid)?.language || 'english'
+                  ).catch(error => {
+                    timer.checkpoint('sentence_tts_error', 'TTS error during streaming', { error: error.message });
+                  });
+                }
+              }
+              
+              // Keep remaining incomplete text
+              accumulatedContent = sentences.remaining;
+            }
+            
+            // Handle tool calls
+            if (chunk.tool_calls && chunk.tool_calls.length > 0) {
+              hasToolCalls = true;
+              toolCalls = chunk.tool_calls;
+            }
+          }
+          
+          // Handle any remaining content
+          if (accumulatedContent.trim()) {
+            timer.checkpoint('final_sentence', 'Processing final sentence');
+            azureTTSService.synthesizeStreaming(
+              accumulatedContent,
+              mediaStream,
+              sessionManager.getSession(streamSid)?.language || 'english'
+            ).catch(error => {
+              timer.checkpoint('final_tts_error', 'Final TTS error', { error: error.message });
+            });
+          }
+          
+          timer.checkpoint('llm_streaming_complete', 'LLM streaming with TTS completed');
+          
+          // Create final response object
+          const response = {
+            content: accumulatedContent,
+            name: "assistant"
+          };
+          
+          if (hasToolCalls) {
+            response.tool_calls = toolCalls;
+          }
+          
+          return {
+            messages: [response]
+          };
+          
+        } catch (error) {
+          timer.checkpoint('stream_error', 'Error in LLM streaming', { error: error.message });
+          
+          // Fallback to regular invoke with better error handling
+          try {
+            const response = await model.invoke(modelMessages);
+            timer.checkpoint('llm_invoke_complete', 'LLM response received (fallback)', { hasToolCalls: !!response.tool_calls?.length });
+            
+            return {
+              messages: [response]
+            };
+          } catch (fallbackError) {
+            timer.checkpoint('fallback_error', 'Fallback invoke also failed', { error: fallbackError.message });
+            
+            // Return error message
+            const errorMessage = new AIMessage({
+              content: "I'm having trouble processing your request. Could you please try again?",
+              name: "assistant"
+            });
+            
+            return {
+              messages: [errorMessage]
+            };
+          }
+        }
+      } else {
+        // Fallback to regular invoke
+        try {
+          const response = await model.invoke(modelMessages);
+          timer.checkpoint('llm_invoke_complete', 'LLM response received (non-streaming)', { hasToolCalls: !!response.tool_calls?.length });
+          
+          return {
+            messages: [response]
+          };
+        } catch (error) {
+          timer.checkpoint('non_streaming_error', 'Non-streaming invoke failed', { error: error.message });
+          
+          // Return error message
+          const errorMessage = new AIMessage({
+            content: "I'm having trouble processing your request. Could you please try again?",
+            name: "assistant"
+          });
+          
+          return {
+            messages: [errorMessage]
+          };
+        }
+      }
+      
+      // Helper function to extract complete sentences
+      function extractCompleteSentences(text) {
+        const sentences = [];
+        const sentenceEnders = /[.!?]\s+/g;
+        let lastIndex = 0;
+        let match;
+        
+        while ((match = sentenceEnders.exec(text)) !== null) {
+          const sentence = text.substring(lastIndex, match.index + 1).trim();
+          if (sentence) {
+            sentences.push(sentence);
+          }
+          lastIndex = sentenceEnders.lastIndex;
+        }
+        
+        const remaining = text.substring(lastIndex).trim();
+        return { complete: sentences, remaining };
+      }
 
     timer.checkpoint('generate_response_complete', 'Response generation completed successfully');
-    return {
-      messages: [response]
-    };
 
   } catch (error) {
     timer.checkpoint('generate_response_error', 'Error in response generation', { error: error.message });

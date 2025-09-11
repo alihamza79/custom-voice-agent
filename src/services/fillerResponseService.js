@@ -4,6 +4,7 @@
  */
 
 const chalk = require('chalk');
+const DISABLE_FILLERS = true;
 
 class FillerResponseService {
   constructor() {
@@ -16,6 +17,7 @@ class FillerResponseService {
    * Start sending contextual filler responses during long operations
    */
   startFillerSequence(streamSid, context, sendCallback, interval = this.defaultInterval) {
+    if (DISABLE_FILLERS) return;
     // Stop any existing filler sequence
     this.stopFillerSequence(streamSid);
 
@@ -53,6 +55,7 @@ class FillerResponseService {
    * Send immediate filler and optionally start sequence
    */
   sendImmediateFiller(streamSid, context, sendCallback, startSequence = true) {
+    if (DISABLE_FILLERS) return;
     const fillers = this.getContextualFillers(context);
     const immediateFiller = fillers[0];
     
@@ -75,6 +78,7 @@ class FillerResponseService {
    * Start filler sequence with custom responses
    */
   startCustomFillerSequence(streamSid, customFillers, sendCallback, interval = this.defaultInterval) {
+    if (DISABLE_FILLERS) return;
     this.stopFillerSequence(streamSid);
 
     let currentIndex = 0;

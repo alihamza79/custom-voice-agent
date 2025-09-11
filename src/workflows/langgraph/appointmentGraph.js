@@ -87,8 +87,8 @@ class LangGraphAppointmentWorkflow {
   }
 
   /**
-   * Process user input through LangGraph workflow
-   * Optimized for low latency
+   * Process user input through LangGraph workflow with streaming support
+   * Optimized for ultra-low latency with sentence-level TTS streaming
    */
   async processUserInput(streamSid, userInput, sendFillerCallback = null) {
     const timer = createAppointmentTimer(streamSid);
@@ -145,11 +145,11 @@ class LangGraphAppointmentWorkflow {
         messages: [...existingMessages, newMessage]
       };
 
-      timer.checkpoint('langgraph_invoke_start', 'Starting LangGraph execution');
-      // Execute the graph with optimized settings
+      timer.checkpoint('langgraph_invoke_start', 'Starting LangGraph execution with streaming LLM');
+      // Execute the graph - streaming happens at LLM level in nodes
       const result = await this.graph.invoke(inputState, {
         ...sessionData.config,
-        recursionLimit: 10, // Limit recursion for latency
+        recursionLimit: 10,
         streamMode: "values"
       });
       timer.checkpoint('langgraph_invoke_complete', 'LangGraph execution completed');
@@ -207,6 +207,141 @@ class LangGraphAppointmentWorkflow {
         streamSid: streamSid,
         timingData: timer.getSummary()
       };
+    }
+  }
+
+  /**
+   * Process LangGraph with streaming and sentence-level TTS
+   */
+  async processWithStreaming(inputState, config, streamSid, timer) {
+    try {
+      // Get MediaStream for TTS streaming
+      const sessionManager = require('../../services/sessionManager');
+      const mediaStream = sessionManager.getMediaStream(streamSid);
+      
+      if (!mediaStream) {
+        // Fallback to non-streaming if no mediaStream
+        return await this.graph.invoke(inputState, {
+          ...config,
+          recursionLimit: 10,
+          streamMode: "values"
+        });
+      }
+
+      timer.checkpoint('streaming_setup', 'Setting up streaming response pipeline');
+      
+      // Set up sentence accumulation for TTS streaming
+      let accumulatedText = '';
+      let isFirstSentence = true;
+      const azureTTSService = require('../../services/azureTTSService');
+      
+      // Function to handle complete sentences
+      const processSentence = async (sentence) => {
+        if (sentence.trim()) {
+          timer.checkpoint('sentence_tts_start', 'Starting TTS for sentence', { 
+            sentenceLength: sentence.length,
+            isFirst: isFirstSentence 
+          });
+          
+          // Start TTS immediately for this sentence
+          if (isFirstSentence) {
+            mediaStream.speaking = true;
+            mediaStream.ttsStart = Date.now();
+            mediaStream.firstByte = true;
+            isFirstSentence = false;
+          }
+          
+          try {
+            // Get session for language info
+            const sessionManager = require('../../services/sessionManager');
+            const sessionData = sessionManager.getSession(streamSid);
+            
+            await azureTTSService.synthesizeStreaming(
+              sentence,
+              mediaStream,
+              sessionData?.language || 'english'
+            );
+            timer.checkpoint('sentence_tts_complete', 'Sentence TTS completed');
+          } catch (error) {
+            timer.checkpoint('sentence_tts_error', 'Sentence TTS failed', { error: error.message });
+          }
+        }
+      };
+      
+      // Function to detect complete sentences
+      const detectSentences = (text) => {
+        const sentences = [];
+        const sentenceEnders = /[.!?]\s+/g;
+        let lastIndex = 0;
+        let match;
+        
+        while ((match = sentenceEnders.exec(text)) !== null) {
+          const sentence = text.substring(lastIndex, match.index + 1).trim();
+          if (sentence) {
+            sentences.push(sentence);
+          }
+          lastIndex = sentenceEnders.lastIndex;
+        }
+        
+        // Return sentences and remaining text
+        const remaining = text.substring(lastIndex).trim();
+        return { sentences, remaining };
+      };
+
+      timer.checkpoint('graph_streaming_start', 'Starting graph execution with streaming');
+      
+      // Execute graph with streaming mode
+      const stream = await this.graph.stream(inputState, {
+        ...config,
+        recursionLimit: 10,
+        streamMode: "values"
+      });
+      
+      let finalResult = null;
+      
+      // Process streaming chunks
+      for await (const chunk of stream) {
+        if (chunk.messages && chunk.messages.length > 0) {
+          const lastMessage = chunk.messages[chunk.messages.length - 1];
+          
+          if (lastMessage.content && typeof lastMessage.content === 'string') {
+            accumulatedText += lastMessage.content;
+            
+            // Check for complete sentences
+            const { sentences, remaining } = detectSentences(accumulatedText);
+            
+            // Process complete sentences immediately
+            for (const sentence of sentences) {
+              await processSentence(sentence);
+            }
+            
+            // Keep remaining incomplete text
+            accumulatedText = remaining;
+          }
+          
+          // Update final result
+          finalResult = chunk;
+        }
+      }
+      
+      // Process any remaining text
+      if (accumulatedText.trim()) {
+        await processSentence(accumulatedText);
+      }
+      
+      timer.checkpoint('graph_streaming_complete', 'Graph streaming execution completed');
+      
+      return finalResult || { messages: [] };
+      
+    } catch (error) {
+      timer.checkpoint('streaming_error', 'Error in streaming processing', { error: error.message });
+      
+      // Fallback to regular processing
+      return await this.graph.invoke(inputState, {
+        ...config,
+        recursionLimit: 10,
+        streamMode: "values"
+      });
     }
   }
 
