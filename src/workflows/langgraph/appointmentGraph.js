@@ -92,15 +92,15 @@ class LangGraphAppointmentWorkflow {
    */
   async processUserInput(streamSid, userInput, sendFillerCallback = null) {
     const timer = createAppointmentTimer(streamSid);
-    timer.checkpoint('workflow_start', 'Starting LangGraph appointment workflow', { userInput: userInput.substring(0, 50) });
+    // timer.checkpoint('workflow_start', 'Starting LangGraph appointment workflow', { userInput: userInput.substring(0, 50) });
 
     try {
-      timer.checkpoint('session_lookup', 'Looking up session configuration');
+      // timer.checkpoint('session_lookup', 'Looking up session configuration');
       // Get session configuration
       let sessionData = this.sessions.get(streamSid);
       
       if (!sessionData) {
-        timer.checkpoint('session_init_start', 'Session not found, initializing new session');
+        // timer.checkpoint('session_init_start', 'Session not found, initializing new session');
         // Dynamic import for ES modules
         const { default: sessionManager } = await import('../../services/sessionManager.js');
         
@@ -113,7 +113,7 @@ class LangGraphAppointmentWorkflow {
         
         const config = await this.initializeSession(streamSid, callerInfo);
         sessionData = this.sessions.get(streamSid);
-        timer.checkpoint('session_init_complete', 'Session initialization completed');
+        // timer.checkpoint('session_init_complete', 'Session initialization completed');
       }
 
       // Update last activity
@@ -121,19 +121,19 @@ class LangGraphAppointmentWorkflow {
 
       // Send immediate filler and start sequence for long operations
       if (sendFillerCallback) {
-        timer.checkpoint('filler_start', 'Starting filler response sequence');
+        // timer.checkpoint('filler_start', 'Starting filler response sequence');
         const context = this.getFillerContext(userInput);
         fillerResponseService.sendImmediateFiller(streamSid, context, sendFillerCallback, true);
       }
 
-      timer.checkpoint('context_load', 'Loading conversation history from session');
+      // timer.checkpoint('context_load', 'Loading conversation history from session');
       // Get conversation history from session
       const sessionManager = require('../../services/sessionManager');
       const session = sessionManager.getSession(streamSid);
       const existingMessages = session?.workingMemory?.conversationMessages || [];
-      timer.checkpoint('context_loaded', 'Conversation history loaded', { messageCount: existingMessages.length });
+      // timer.checkpoint('context_loaded', 'Conversation history loaded', { messageCount: existingMessages.length });
       
-      timer.checkpoint('message_prep', 'Preparing input state for LangGraph');
+      // timer.checkpoint('message_prep', 'Preparing input state for LangGraph');
       // Create new message
       const newMessage = new HumanMessage({
         content: userInput,
@@ -145,31 +145,31 @@ class LangGraphAppointmentWorkflow {
         messages: [...existingMessages, newMessage]
       };
 
-      timer.checkpoint('langgraph_invoke_start', 'Starting LangGraph execution with streaming LLM');
+      // timer.checkpoint('langgraph_invoke_start', 'Starting LangGraph execution with streaming LLM');
       // Execute the graph - streaming happens at LLM level in nodes
       const result = await this.graph.invoke(inputState, {
         ...sessionData.config,
         recursionLimit: 10,
         streamMode: "values"
       });
-      timer.checkpoint('langgraph_invoke_complete', 'LangGraph execution completed');
+      // timer.checkpoint('langgraph_invoke_complete', 'LangGraph execution completed');
       
       // Stop any active filler sequences
       fillerResponseService.stopFillerSequence(streamSid);
 
-      timer.checkpoint('result_processing', 'Processing LangGraph result');
+      // timer.checkpoint('result_processing', 'Processing LangGraph result');
       
       // Extract response from result
       const messages = result.messages || [];
       const lastMessage = messages[messages.length - 1];
       const response = lastMessage?.content || "I'm sorry, I couldn't process that request.";
-      timer.checkpoint('response_extracted', 'Response extracted from result', { responseLength: response.length });
+      // timer.checkpoint('response_extracted', 'Response extracted from result', { responseLength: response.length });
 
       // Check if workflow should end
       const shouldEndCall = this.shouldEndCall(result, response);
-      timer.checkpoint('end_call_check', 'End call decision made', { shouldEndCall });
+      // timer.checkpoint('end_call_check', 'End call decision made', { shouldEndCall });
 
-      timer.checkpoint('session_save_start', 'Saving conversation history to session');
+      // timer.checkpoint('session_save_start', 'Saving conversation history to session');
       // Save conversation history to session for context continuity
       const allMessages = result.messages || [];
       sessionManager.updateSession(streamSid, {
@@ -179,10 +179,10 @@ class LangGraphAppointmentWorkflow {
           lastActivity: new Date()
         }
       });
-      timer.checkpoint('session_save_complete', 'Session saved successfully');
+      // timer.checkpoint('session_save_complete', 'Session saved successfully');
 
       const summary = timer.getSummary();
-      timer.checkpoint('workflow_complete', 'Appointment workflow completed successfully', { totalTime: summary.totalTime });
+      // timer.checkpoint('workflow_complete', 'Appointment workflow completed successfully', { totalTime: summary.totalTime });
       timer.printSummary();
 
       return {
@@ -196,7 +196,7 @@ class LangGraphAppointmentWorkflow {
       };
 
     } catch (error) {
-      timer.checkpoint('workflow_error', 'Error in appointment workflow', { error: error.message });
+      // timer.checkpoint('workflow_error', 'Error in appointment workflow', { error: error.message });
       timer.printSummary();
 
       return {
@@ -228,7 +228,7 @@ class LangGraphAppointmentWorkflow {
         });
       }
 
-      timer.checkpoint('streaming_setup', 'Setting up streaming response pipeline');
+      // timer.checkpoint('streaming_setup', 'Setting up streaming response pipeline');
       
       // Set up sentence accumulation for TTS streaming
       let accumulatedText = '';
@@ -238,10 +238,10 @@ class LangGraphAppointmentWorkflow {
       // Function to handle complete sentences
       const processSentence = async (sentence) => {
         if (sentence.trim()) {
-          timer.checkpoint('sentence_tts_start', 'Starting TTS for sentence', { 
-            sentenceLength: sentence.length,
-            isFirst: isFirstSentence 
-          });
+          // timer.checkpoint('sentence_tts_start', 'Starting TTS for sentence', { 
+          //   sentenceLength: sentence.length,
+          //   isFirst: isFirstSentence 
+          // });
           
           // Start TTS immediately for this sentence
           if (isFirstSentence) {
@@ -261,9 +261,9 @@ class LangGraphAppointmentWorkflow {
               mediaStream,
               sessionData?.language || 'english'
             );
-            timer.checkpoint('sentence_tts_complete', 'Sentence TTS completed');
+            // timer.checkpoint('sentence_tts_complete', 'Sentence TTS completed');
           } catch (error) {
-            timer.checkpoint('sentence_tts_error', 'Sentence TTS failed', { error: error.message });
+            // timer.checkpoint('sentence_tts_error', 'Sentence TTS failed', { error: error.message });
           }
         }
       };
@@ -288,7 +288,7 @@ class LangGraphAppointmentWorkflow {
         return { sentences, remaining };
       };
 
-      timer.checkpoint('graph_streaming_start', 'Starting graph execution with streaming');
+      // timer.checkpoint('graph_streaming_start', 'Starting graph execution with streaming');
       
       // Execute graph with streaming mode
       const stream = await this.graph.stream(inputState, {
@@ -329,12 +329,12 @@ class LangGraphAppointmentWorkflow {
         await processSentence(accumulatedText);
       }
       
-      timer.checkpoint('graph_streaming_complete', 'Graph streaming execution completed');
+      // timer.checkpoint('graph_streaming_complete', 'Graph streaming execution completed');
       
       return finalResult || { messages: [] };
       
     } catch (error) {
-      timer.checkpoint('streaming_error', 'Error in streaming processing', { error: error.message });
+      // timer.checkpoint('streaming_error', 'Error in streaming processing', { error: error.message });
       
       // Fallback to regular processing
       return await this.graph.invoke(inputState, {

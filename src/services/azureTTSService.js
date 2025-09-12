@@ -4,6 +4,7 @@ const { AZURE_TTS_CONFIG } = require('../config/constants');
 const { SPEECH_KEY, SPEECH_REGION } = require('../config/environment');
 const sseService = require('./sseService');
 const { getAzureTTSConfig } = require('../utils/languageDetection');
+const vadService = require('./vadService');
 
 class AzureTTSService {
   constructor() {
@@ -59,6 +60,11 @@ class AzureTTSService {
 
   // NEW: Real-time Azure TTS Streaming Function with minimal latency and multi-language support
   async synthesizeStreaming(text, mediaStream, language = 'english', retries = 3) {
+    // Notify VAD that assistant is about to start speaking
+    if (mediaStream && mediaStream.streamSid) {
+      vadService.onAssistantSpeakingStart(mediaStream.streamSid);
+    }
+    
     // Start TTS
     
     if (!this.synthesizer || !this.isReady) {
@@ -172,11 +178,21 @@ class AzureTTSService {
             // This callback is for final completion, streaming happens in synthesizing event
             console.log('Azure TTS: Final synthesis callback completed');
             this.currentSynthesisRequest = null;
+            
+            // Notify VAD that assistant stopped speaking
+            if (mediaStream && mediaStream.streamSid) {
+              vadService.onAssistantSpeakingEnd(mediaStream.streamSid);
+            }
           },
           (error) => {
             console.error('Azure TTS: Streaming synthesis error:', error);
             mediaStream.speaking = false;
             this.currentSynthesisRequest = null;
+            
+            // Notify VAD that assistant stopped speaking (due to error)
+            if (mediaStream && mediaStream.streamSid) {
+              vadService.onAssistantSpeakingEnd(mediaStream.streamSid);
+            }
             
             // Retry on error
             if (retries > 0) {
@@ -222,11 +238,16 @@ class AzureTTSService {
   }
 
   // Cancel current synthesis
-  cancelCurrentSynthesis() {
+  cancelCurrentSynthesis(streamSid = null) {
     if (this.currentSynthesisRequest) {
       try {
         this.currentSynthesisRequest.cancel();
         console.log('Azure TTS: Current synthesis canceled');
+        
+        // Notify VAD that assistant stopped speaking (due to cancellation)
+        if (streamSid) {
+          vadService.onAssistantSpeakingEnd(streamSid);
+        }
       } catch (e) {
         console.warn('Azure TTS: Error canceling synthesis:', e);
       }

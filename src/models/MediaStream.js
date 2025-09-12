@@ -8,6 +8,7 @@ const sessionManager = require('../services/sessionManager');
 const ttsPrewarmer = require('../services/ttsPrewarmer');
 const { getGreetingLanguage, getDeepgramLanguage } = require('../utils/languageDetection');
 const { globalTimingLogger } = require('../utils/timingLogger');
+const vadService = require('../services/vadService');
 
 class MediaStream {
   constructor(connection) {
@@ -240,6 +241,9 @@ class MediaStream {
           
           globalTimingLogger.logMoment('Caller information extracted');
           
+          // Initialize VAD service for this session
+          vadService.initializeSession(this.streamSid);
+          
           // 🔥 Trigger TTS prewarming for instant response
           ttsPrewarmer.triggerPrewarm().catch(error => {
             console.warn('⚠️ TTS prewarming failed on call start:', error.message);
@@ -320,6 +324,13 @@ class MediaStream {
         console.warn('SessionManager: Error cleaning up session:', e.message);
       }
       
+      // Clean up VAD service
+      try {
+        vadService.cleanupSession(this.streamSid);
+      } catch (e) {
+        console.warn('VAD: Error cleaning up session:', e.message);
+      }
+      
       // LEGACY: Clean up LangChain appointment sessions for backward compatibility
       try {
         const appointmentHandler = require('../workflows/AppointmentWorkflowHandler');
@@ -355,7 +366,7 @@ class MediaStream {
     
     // Clear currentMediaStream if it points to this connection
     if (this.currentMediaStream === this) {
-      azureTTSService.cancelCurrentSynthesis();
+      azureTTSService.cancelCurrentSynthesis(this.streamSid);
       
       this.currentMediaStream = null;
       this.speaking = false;

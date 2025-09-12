@@ -12,6 +12,7 @@ const deepgramSTTService = require('../services/deepgramSTTService');
 const sessionManager = require('../services/sessionManager');
 const { InterruptionManager, shouldTriggerAdvancedBargeIn } = require('../services/interruptionManager');
 const { globalTimingLogger } = require('../utils/timingLogger');
+const vadService = require('../services/vadService');
 
 // Initialize interruption manager
 const interruptionManager = new InterruptionManager();
@@ -48,9 +49,18 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
     }
   });
 
-  // Add Voice Activity Detection listener
+  // Add Voice Activity Detection listeners
   deepgram.addListener(LiveTranscriptionEvents.SpeechStarted, () => {
     globalTimingLogger.logMoment('Speech activity detected');
+    // Notify VAD service of speech activity
+    vadService.onSpeechStarted(mediaStream.streamSid);
+  });
+
+  // Add Speech Ended listener for silence detection
+  deepgram.addListener(LiveTranscriptionEvents.SpeechEnded, () => {
+    globalTimingLogger.logMoment('Speech ended detected');
+    // Notify VAD service of speech end
+    vadService.onSpeechEnded(mediaStream.streamSid);
   });
 
   deepgram.addListener(LiveTranscriptionEvents.Open, async () => {

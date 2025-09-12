@@ -255,7 +255,7 @@ class InterruptionManager {
     
     try {
       // 1. Cancel Azure TTS synthesis immediately
-      azureTTSService.cancelCurrentSynthesis();
+      azureTTSService.cancelCurrentSynthesis(streamSid);
       
       // 2. Send clear command to Twilio
       const clearMessage = {

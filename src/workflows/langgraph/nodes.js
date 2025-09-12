@@ -18,10 +18,10 @@ const modelCache = new Map();
  */
 async function generateResponse(state, config = {}) {
   const timer = createAppointmentTimer(config.configurable?.streamSid);
-  timer.checkpoint('generate_response_start', 'Starting LLM response generation');
+  // timer.checkpoint('generate_response_start', 'Starting LLM response generation');
   
   try {
-    timer.checkpoint('import_services', 'Importing required services');
+    // timer.checkpoint('import_services', 'Importing required services');
     // Import service
     const sessionManager = require('../../services/sessionManager');
     
@@ -33,27 +33,27 @@ async function generateResponse(state, config = {}) {
     if (!streamSid) {
       throw new Error("StreamSid required for appointment workflow");
     }
-    timer.checkpoint('config_validated', 'Configuration validated', { streamSid: streamSid?.substring(0, 8) });
+    // timer.checkpoint('config_validated', 'Configuration validated', { streamSid: streamSid?.substring(0, 8) });
 
-    timer.checkpoint('session_data_load', 'Loading session data and caller info');
+    // timer.checkpoint('session_data_load', 'Loading session data and caller info');
     // Get session data
     const session = sessionManager.getSession(streamSid);
     const callerInfo = session?.callerInfo || {};
     const language = session?.language || 'english';
-    timer.checkpoint('session_data_loaded', 'Session data loaded', { callerName: callerInfo.name });
+    // timer.checkpoint('session_data_loaded', 'Session data loaded', { callerName: callerInfo.name });
 
-    timer.checkpoint('tools_creation_start', 'Creating calendar tools for session');
+    // timer.checkpoint('tools_creation_start', 'Creating calendar tools for session');
     // Use cached tools or create new ones
     let tools = toolCache.get('calendar_tools');
     if (!tools) {
       tools = await createCalendarTools(streamSid);
       toolCache.set('calendar_tools', tools);
-      timer.checkpoint('tools_created_cached', 'Calendar tools created and cached', { toolCount: tools.length });
+      // timer.checkpoint('tools_created_cached', 'Calendar tools created and cached', { toolCount: tools.length });
     } else {
-      timer.checkpoint('tools_cache_hit', 'Using cached calendar tools', { toolCount: tools.length });
+      // timer.checkpoint('tools_cache_hit', 'Using cached calendar tools', { toolCount: tools.length });
     }
 
-    timer.checkpoint('llm_init_start', 'Initializing OpenAI LLM with tools');
+    // timer.checkpoint('llm_init_start', 'Initializing OpenAI LLM with tools');
     // Use cached model or create new one with optimized settings
     const modelKey = `${config.model || "gpt-4o-mini"}_${config.temperature || 0.3}_${config.maxTokens || 200}`;
     let model = modelCache.get(modelKey);
@@ -65,12 +65,12 @@ async function generateResponse(state, config = {}) {
         streaming: true                         // Enable streaming for immediate response start
       }).bindTools(tools);
       modelCache.set(modelKey, model);
-      timer.checkpoint('llm_created_cached', 'LLM created and cached with streaming enabled');
+      // timer.checkpoint('llm_created_cached', 'LLM created and cached with streaming enabled');
     } else {
-      timer.checkpoint('llm_cache_hit', 'Using cached LLM model');
+      // timer.checkpoint('llm_cache_hit', 'Using cached LLM model');
     }
 
-    timer.checkpoint('context_build_start', 'Building appointment context for prompt');
+    // timer.checkpoint('context_build_start', 'Building appointment context for prompt');
     // Get appointment context if available
     let appointmentContext = '';
     if (session?.preloadedAppointments?.length > 0) {
@@ -85,7 +85,7 @@ async function generateResponse(state, config = {}) {
       }).join('\n');
       appointmentContext = `\n\n📅 CURRENT APPOINTMENTS:\n${appointmentList}\n\n`;
     }
-    timer.checkpoint('context_built', 'Appointment context prepared', { appointmentCount: session?.preloadedAppointments?.length || 0 });
+    // timer.checkpoint('context_built', 'Appointment context prepared', { appointmentCount: session?.preloadedAppointments?.length || 0 });
 
     // Optimized system prompt for faster processing while maintaining functionality
     const systemPrompt = `You help ${callerInfo.name || 'caller'} manage appointments.
@@ -105,30 +105,30 @@ TOOLS: get_appointments, shift_appointment, cancel_appointment, end_call
 
 APPOINTMENTS:${appointmentContext}
 
-FORMAT: Use ISO dates (YYYY-MM-DDTHH:mm:ssZ), set confirmationReceived=true when confirmed.
+FORMAT: Do not ask the user for ISO format. Accept natural language dates/times and convert internally to ISO (YYYY-MM-DDTHH:mm:ssZ). Set confirmationReceived=true when confirmed.
 
 Now: ${new Date().toISOString()}`;
 
     // Create system message
     const systemMessage = new SystemMessage(systemPrompt);
 
-    timer.checkpoint('prompt_prep', 'Preparing messages for LLM invocation');
+    // timer.checkpoint('prompt_prep', 'Preparing messages for LLM invocation');
     // Limit context window for faster processing (keep last 6 messages + system)
     const recentMessages = messages.slice(-6);
     const modelMessages = [systemMessage, ...recentMessages];
-    timer.checkpoint('prompt_ready', 'Messages prepared for model', { 
-      messageCount: modelMessages.length, 
-      contextLimited: messages.length > 6 
-    });
+    // timer.checkpoint('prompt_ready', 'Messages prepared for model', { 
+    //   messageCount: modelMessages.length, 
+    //   contextLimited: messages.length > 6 
+    // });
 
-    timer.checkpoint('llm_invoke_start', 'Invoking OpenAI LLM with streaming');
+    // timer.checkpoint('llm_invoke_start', 'Invoking OpenAI LLM with streaming');
     
       // Check if we have MediaStream available for real-time TTS
       const mediaStream = sessionManager.getMediaStream(streamSid);
       
       if (mediaStream && config.enableStreaming === true) {
         // Stream response with real-time TTS
-        timer.checkpoint('llm_streaming_start', 'Starting LLM streaming with real-time TTS');
+        // timer.checkpoint('llm_streaming_start', 'Starting LLM streaming with real-time TTS');
         
         try {
           const azureTTSService = require('../../services/azureTTSService');
@@ -158,6 +158,7 @@ Now: ${new Date().toISOString()}`;
           });
           
           // Start streaming
+          console.log('🚀 LLM_START: Starting LLM streaming call');
           const stream = await model.stream(streamingMessages);
           
           for await (const chunk of stream) {
@@ -166,7 +167,7 @@ Now: ${new Date().toISOString()}`;
               
               // Handle first chunk immediately for low latency
               if (isFirstChunk) {
-                timer.checkpoint('first_chunk', 'First LLM chunk received');
+                // timer.checkpoint('first_chunk', 'First LLM chunk received');
                 mediaStream.speaking = true;
                 mediaStream.ttsStart = Date.now();
                 mediaStream.firstByte = true;
@@ -177,7 +178,7 @@ Now: ${new Date().toISOString()}`;
               const sentences = extractCompleteSentences(accumulatedContent);
               for (const sentence of sentences.complete) {
                 if (sentence.trim()) {
-                  timer.checkpoint('sentence_streaming', 'Streaming sentence to TTS', { sentenceLength: sentence.length });
+                  // timer.checkpoint('sentence_streaming', 'Streaming sentence to TTS', { sentenceLength: sentence.length });
                   
                   // Start TTS for this sentence immediately (don't await)
                   azureTTSService.synthesizeStreaming(
@@ -185,7 +186,7 @@ Now: ${new Date().toISOString()}`;
                     mediaStream,
                     sessionManager.getSession(streamSid)?.language || 'english'
                   ).catch(error => {
-                    timer.checkpoint('sentence_tts_error', 'TTS error during streaming', { error: error.message });
+                    // timer.checkpoint('sentence_tts_error', 'TTS error during streaming', { error: error.message });
                   });
                 }
               }
@@ -203,17 +204,18 @@ Now: ${new Date().toISOString()}`;
           
           // Handle any remaining content
           if (accumulatedContent.trim()) {
-            timer.checkpoint('final_sentence', 'Processing final sentence');
+            // timer.checkpoint('final_sentence', 'Processing final sentence');
             azureTTSService.synthesizeStreaming(
               accumulatedContent,
               mediaStream,
               sessionManager.getSession(streamSid)?.language || 'english'
             ).catch(error => {
-              timer.checkpoint('final_tts_error', 'Final TTS error', { error: error.message });
+              // timer.checkpoint('final_tts_error', 'Final TTS error', { error: error.message });
             });
           }
           
-          timer.checkpoint('llm_streaming_complete', 'LLM streaming with TTS completed');
+          // timer.checkpoint('llm_streaming_complete', 'LLM streaming with TTS completed');
+          console.log('✅ LLM_COMPLETE: LLM streaming completed');
           
           // Create final response object
           const response = {
@@ -230,18 +232,20 @@ Now: ${new Date().toISOString()}`;
           };
           
         } catch (error) {
-          timer.checkpoint('stream_error', 'Error in LLM streaming', { error: error.message });
+          // timer.checkpoint('stream_error', 'Error in LLM streaming', { error: error.message });
           
           // Fallback to regular invoke with better error handling
           try {
+            console.log('🚀 LLM_START: Starting LLM fallback invoke call');
             const response = await model.invoke(modelMessages);
-            timer.checkpoint('llm_invoke_complete', 'LLM response received (fallback)', { hasToolCalls: !!response.tool_calls?.length });
+            console.log('✅ LLM_COMPLETE: LLM fallback invoke completed');
+            // timer.checkpoint('llm_invoke_complete', 'LLM response received (fallback)', { hasToolCalls: !!response.tool_calls?.length });
             
             return {
               messages: [response]
             };
           } catch (fallbackError) {
-            timer.checkpoint('fallback_error', 'Fallback invoke also failed', { error: fallbackError.message });
+            // timer.checkpoint('fallback_error', 'Fallback invoke also failed', { error: fallbackError.message });
             
             // Return error message
             const errorMessage = new AIMessage({
@@ -257,14 +261,16 @@ Now: ${new Date().toISOString()}`;
       } else {
         // Fallback to regular invoke
         try {
+          console.log('🚀 LLM_START: Starting LLM non-streaming invoke call');
           const response = await model.invoke(modelMessages);
-          timer.checkpoint('llm_invoke_complete', 'LLM response received (non-streaming)', { hasToolCalls: !!response.tool_calls?.length });
+          console.log('✅ LLM_COMPLETE: LLM non-streaming invoke completed');
+          // timer.checkpoint('llm_invoke_complete', 'LLM response received (non-streaming)', { hasToolCalls: !!response.tool_calls?.length });
           
           return {
             messages: [response]
           };
         } catch (error) {
-          timer.checkpoint('non_streaming_error', 'Non-streaming invoke failed', { error: error.message });
+          // timer.checkpoint('non_streaming_error', 'Non-streaming invoke failed', { error: error.message });
           
           // Return error message
           const errorMessage = new AIMessage({
@@ -297,10 +303,10 @@ Now: ${new Date().toISOString()}`;
         return { complete: sentences, remaining };
       }
 
-    timer.checkpoint('generate_response_complete', 'Response generation completed successfully');
+    // timer.checkpoint('generate_response_complete', 'Response generation completed successfully');
 
   } catch (error) {
-    timer.checkpoint('generate_response_error', 'Error in response generation', { error: error.message });
+    // timer.checkpoint('generate_response_error', 'Error in response generation', { error: error.message });
     
     // Return error message
     const errorMessage = new AIMessage({
@@ -349,35 +355,35 @@ function toolsCondition(state) {
  */
 async function executeTools(state, config = {}) {
   const timer = createAppointmentTimer(config.configurable?.streamSid);
-  timer.checkpoint('execute_tools_start', 'Starting tool execution');
+  // timer.checkpoint('execute_tools_start', 'Starting tool execution');
   
   try {
     const messages = state.messages || [];
     const lastMessage = messages[messages.length - 1];
     
     if (!lastMessage?.tool_calls?.length) {
-      timer.checkpoint('no_tools', 'No tool calls to execute');
+      // timer.checkpoint('no_tools', 'No tool calls to execute');
       return { messages: [] };
     }
 
-    timer.checkpoint('tools_setup_start', 'Setting up tools for execution');
+    // timer.checkpoint('tools_setup_start', 'Setting up tools for execution');
     const streamSid = config.configurable?.streamSid;
     const tools = await createCalendarTools(streamSid);
     const toolMap = {};
     tools.forEach(tool => toolMap[tool.name] = tool);
-    timer.checkpoint('tools_setup_complete', 'Tools mapped and ready', { toolCount: tools.length, callCount: lastMessage.tool_calls.length });
+    // timer.checkpoint('tools_setup_complete', 'Tools mapped and ready', { toolCount: tools.length, callCount: lastMessage.tool_calls.length });
 
-    timer.checkpoint('tool_execution_start', 'Beginning tool execution loop');
+    // timer.checkpoint('tool_execution_start', 'Beginning tool execution loop');
     const toolMessages = [];
 
     for (const toolCall of lastMessage.tool_calls) {
       const { name, args, id } = toolCall;
-      timer.checkpoint(`tool_${name}_start`, `Executing tool: ${name}`, { args });
+      // timer.checkpoint(`tool_${name}_start`, `Executing tool: ${name}`, { args });
       
       if (toolMap[name]) {
         try {
           const result = await toolMap[name].invoke(args);
-          timer.checkpoint(`tool_${name}_complete`, `Tool ${name} completed successfully`, { resultLength: result?.length || 0 });
+          // timer.checkpoint(`tool_${name}_complete`, `Tool ${name} completed successfully`, { resultLength: result?.length || 0 });
           toolMessages.push({
             type: "tool",
             content: result,
@@ -385,7 +391,7 @@ async function executeTools(state, config = {}) {
             name: name
           });
         } catch (error) {
-          timer.checkpoint(`tool_${name}_error`, `Tool ${name} execution failed`, { error: error.message });
+          // timer.checkpoint(`tool_${name}_error`, `Tool ${name} execution failed`, { error: error.message });
           toolMessages.push({
             type: "tool",
             content: `Error executing ${name}: ${error.message}`,
@@ -394,7 +400,7 @@ async function executeTools(state, config = {}) {
           });
         }
       } else {
-        timer.checkpoint(`tool_${name}_unknown`, `Unknown tool requested: ${name}`);
+        // timer.checkpoint(`tool_${name}_unknown`, `Unknown tool requested: ${name}`);
         toolMessages.push({
           type: "tool",
           content: `Unknown tool: ${name}`,
@@ -404,13 +410,13 @@ async function executeTools(state, config = {}) {
       }
     }
 
-    timer.checkpoint('execute_tools_complete', 'All tools executed successfully', { messageCount: toolMessages.length });
+    // timer.checkpoint('execute_tools_complete', 'All tools executed successfully', { messageCount: toolMessages.length });
     return {
       messages: toolMessages
     };
 
   } catch (error) {
-    timer.checkpoint('execute_tools_error', 'Error in tool execution', { error: error.message });
+    // timer.checkpoint('execute_tools_error', 'Error in tool execution', { error: error.message });
     return {
       messages: [{
         type: "tool",
