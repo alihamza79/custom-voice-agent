@@ -15,8 +15,18 @@ const AppointmentAgentState = Annotation.Root({
     reducer: (left, right) => left.concat(right),
     default: () => [],
   }),
-  // Additional state fields can be added here if needed
-  // Following the pattern from Python: simple and clean
+  // Enhanced conversation state tracking for natural end call detection
+  conversationState: Annotation({
+    reducer: (left, right) => ({ ...left, ...right }),
+    default: () => ({
+      taskCompleted: false,
+      assistanceOffered: false,
+      endCallEligible: false,
+      lastTaskType: null,
+      assistanceOfferMessage: null,
+      userResponseToAssistance: null
+    })
+  })
 });
 
 /**

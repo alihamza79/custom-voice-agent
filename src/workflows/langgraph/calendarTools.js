@@ -230,7 +230,101 @@ async function createCalendarTools(streamSid) {
     }
   });
 
-  return [getAppointmentsTool, shiftAppointmentTool, cancelAppointmentTool, endCallTool];
+  const analyzeEndCallIntentTool = new DynamicStructuredTool({
+    name: "analyze_end_call_intent",
+    description: "Analyze if user wants to end the call naturally after task completion and assistance offer.",
+    schema: z.object({
+      userResponse: z.string().describe("The user's response to assistance offer"),
+      context: z.string().describe("The conversation context (e.g., 'post_assistance_offer')"),
+      taskCompleted: z.boolean().describe("Whether a task was just completed")
+    }),
+    func: async ({ userResponse, context, taskCompleted }) => {
+      const timer = createAppointmentTimer(streamSid);
+      timer.checkpoint('analyze_end_call_start', 'Starting end call intent analysis', { userResponse: userResponse.substring(0, 50) });
+      
+      try {
+        // Use OpenAI to analyze the user's intent
+        const { ChatOpenAI } = require("@langchain/openai");
+        const { HumanMessage, SystemMessage } = require("@langchain/core/messages");
+        
+        const analysisModel = new ChatOpenAI({
+          modelName: "gpt-4o-mini",
+          temperature: 0.1, // Low temperature for consistent analysis
+          maxTokens: 150
+        });
+
+        const analysisPrompt = `Analyze this user response in the context of a completed task where assistance was offered:
+
+User Response: "${userResponse}"
+Context: ${context}
+Task Completed: ${taskCompleted}
+
+Determine if the user:
+1. Wants to end the call (gratitude, no further needs, explicit decline, satisfaction)
+2. Wants to continue (new request, clarification, additional help, questions)
+
+Common END CALL indicators:
+- Gratitude + completion: "Thanks, that's all I needed", "Perfect, thanks"
+- Explicit decline: "No, I'm good", "That's everything", "I'm all set"
+- Satisfaction: "All set", "That's perfect", "Great, thanks"
+- Polite closure: "That's all for now", "I'm done"
+
+Common CONTINUE indicators:
+- New requests: "Actually, can you also...", "One more thing", "I also need..."
+- Clarifications: "Wait, what about...", "Just to confirm", "Can you explain..."
+- Questions: "What if...", "How do I...", "Can you help with..."
+
+Respond with ONLY a JSON object: {"shouldEndCall": boolean, "confidence": 0.0-1.0, "reason": "brief explanation"}`;
+
+        const messages = [
+          new SystemMessage("You are an expert at analyzing conversational intent. Respond only with valid JSON."),
+          new HumanMessage(analysisPrompt)
+        ];
+
+        const response = await analysisModel.invoke(messages);
+        const analysisText = response.content.trim();
+        
+        // Parse the JSON response
+        let analysis;
+        try {
+          // Extract JSON from response (in case there's extra text)
+          const jsonMatch = analysisText.match(/\{.*\}/);
+          if (jsonMatch) {
+            analysis = JSON.parse(jsonMatch[0]);
+          } else {
+            analysis = JSON.parse(analysisText);
+          }
+        } catch (parseError) {
+          console.warn('Failed to parse end call analysis, using fallback');
+          analysis = {
+            shouldEndCall: false,
+            confidence: 0.5,
+            reason: "Analysis parsing failed, defaulting to continue"
+          };
+        }
+
+        timer.checkpoint('analyze_end_call_complete', 'End call intent analysis completed', { 
+          shouldEndCall: analysis.shouldEndCall, 
+          confidence: analysis.confidence 
+        });
+
+        // Return actionable response instead of just JSON
+        if (analysis.shouldEndCall && analysis.confidence >= 0.7) {
+          return `ANALYSIS_RESULT: END_CALL - User wants to end the conversation. Confidence: ${analysis.confidence}. Reason: ${analysis.reason}`;
+        } else {
+          return `ANALYSIS_RESULT: CONTINUE - User wants to continue the conversation. Confidence: ${analysis.confidence}. Reason: ${analysis.reason}`;
+        }
+
+      } catch (error) {
+        timer.checkpoint('analyze_end_call_error', 'Error in end call intent analysis', { error: error.message });
+        
+        // Fallback: be conservative and don't end call on error
+        return `ANALYSIS_RESULT: CONTINUE - Analysis failed, defaulting to continue conversation. Confidence: 0.3. Reason: Analysis failed, defaulting to continue conversation`;
+      }
+    }
+  });
+
+  return [getAppointmentsTool, shiftAppointmentTool, cancelAppointmentTool, endCallTool, analyzeEndCallIntentTool];
 }
 
 module.exports = { createCalendarTools };

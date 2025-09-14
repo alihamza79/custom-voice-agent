@@ -1,5 +1,6 @@
 // Clean Performance Logger - Structured latency tracking
 const chalk = require('chalk');
+const DISABLE_GLOBAL_PERF_LOGS = true;
 
 class PerformanceLogger {
   constructor() {
@@ -8,6 +9,7 @@ class PerformanceLogger {
 
   // Start timing an operation
   startTiming(streamSid, operation) {
+    if (DISABLE_GLOBAL_PERF_LOGS) return;
     if (!this.sessionMetrics.has(streamSid)) {
       this.sessionMetrics.set(streamSid, {});
     }
@@ -17,6 +19,7 @@ class PerformanceLogger {
 
   // End timing an operation
   endTiming(streamSid, operation) {
+    if (DISABLE_GLOBAL_PERF_LOGS) return;
     const session = this.sessionMetrics.get(streamSid);
     if (session && session[operation]) {
       session[operation].end = Date.now();
@@ -26,21 +29,25 @@ class PerformanceLogger {
 
   // Log user input
   logUserInput(streamSid, input) {
+    if (DISABLE_GLOBAL_PERF_LOGS) return;
     console.log(chalk.blue(`👤 USER: "${input}"`));
   }
 
   // Log model output
   logModelOutput(streamSid, output) {
+    if (DISABLE_GLOBAL_PERF_LOGS) return;
     console.log(chalk.green(`🤖 AI: "${output}"`));
   }
 
   // Log filler word
   logFillerWord(streamSid, filler) {
+    if (DISABLE_GLOBAL_PERF_LOGS) return;
     console.log(chalk.yellow(`💬 FILLER: "${filler}"`));
   }
 
   // Log performance metrics in structured format
   logPerformanceMetrics(streamSid) {
+    if (DISABLE_GLOBAL_PERF_LOGS) return;
     const session = this.sessionMetrics.get(streamSid);
     if (!session) return;
 

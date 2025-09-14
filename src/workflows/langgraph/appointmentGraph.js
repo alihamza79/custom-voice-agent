@@ -87,20 +87,20 @@ class LangGraphAppointmentWorkflow {
   }
 
   /**
-   * Process user input through LangGraph workflow
-   * Optimized for low latency
+   * Process user input through LangGraph workflow with streaming support
+   * Optimized for ultra-low latency with sentence-level TTS streaming
    */
   async processUserInput(streamSid, userInput, sendFillerCallback = null) {
     const timer = createAppointmentTimer(streamSid);
-    timer.checkpoint('workflow_start', 'Starting LangGraph appointment workflow', { userInput: userInput.substring(0, 50) });
+    // timer.checkpoint('workflow_start', 'Starting LangGraph appointment workflow', { userInput: userInput.substring(0, 50) });
 
     try {
-      timer.checkpoint('session_lookup', 'Looking up session configuration');
+      // timer.checkpoint('session_lookup', 'Looking up session configuration');
       // Get session configuration
       let sessionData = this.sessions.get(streamSid);
       
       if (!sessionData) {
-        timer.checkpoint('session_init_start', 'Session not found, initializing new session');
+        // timer.checkpoint('session_init_start', 'Session not found, initializing new session');
         // Dynamic import for ES modules
         const { default: sessionManager } = await import('../../services/sessionManager.js');
         
@@ -113,7 +113,7 @@ class LangGraphAppointmentWorkflow {
         
         const config = await this.initializeSession(streamSid, callerInfo);
         sessionData = this.sessions.get(streamSid);
-        timer.checkpoint('session_init_complete', 'Session initialization completed');
+        // timer.checkpoint('session_init_complete', 'Session initialization completed');
       }
 
       // Update last activity
@@ -121,68 +121,75 @@ class LangGraphAppointmentWorkflow {
 
       // Send immediate filler and start sequence for long operations
       if (sendFillerCallback) {
-        timer.checkpoint('filler_start', 'Starting filler response sequence');
+        // timer.checkpoint('filler_start', 'Starting filler response sequence');
         const context = this.getFillerContext(userInput);
         fillerResponseService.sendImmediateFiller(streamSid, context, sendFillerCallback, true);
       }
 
-      timer.checkpoint('context_load', 'Loading conversation history from session');
+      // timer.checkpoint('context_load', 'Loading conversation history from session');
       // Get conversation history from session
       const sessionManager = require('../../services/sessionManager');
       const session = sessionManager.getSession(streamSid);
       const existingMessages = session?.workingMemory?.conversationMessages || [];
-      timer.checkpoint('context_loaded', 'Conversation history loaded', { messageCount: existingMessages.length });
       
-      timer.checkpoint('message_prep', 'Preparing input state for LangGraph');
+      // ENHANCED: Load conversation state from session
+      const existingConversationState = session?.workingMemory?.conversationState || {};
+      console.log('🔄 Loading conversation state from session:', existingConversationState);
+      // timer.checkpoint('context_loaded', 'Conversation history loaded', { messageCount: existingMessages.length });
+      
+      // timer.checkpoint('message_prep', 'Preparing input state for LangGraph');
       // Create new message
       const newMessage = new HumanMessage({
         content: userInput,
         name: "user"
       });
       
-      // Create input state for LangGraph with conversation history
+      // Create input state for LangGraph with conversation history and state
       const inputState = {
-        messages: [...existingMessages, newMessage]
+        messages: [...existingMessages, newMessage],
+        conversationState: existingConversationState
       };
 
-      timer.checkpoint('langgraph_invoke_start', 'Starting LangGraph execution');
-      // Execute the graph with optimized settings
+      // timer.checkpoint('langgraph_invoke_start', 'Starting LangGraph execution with streaming LLM');
+      // Execute the graph - streaming happens at LLM level in nodes
       const result = await this.graph.invoke(inputState, {
         ...sessionData.config,
-        recursionLimit: 10, // Limit recursion for latency
+        recursionLimit: 10,
         streamMode: "values"
       });
-      timer.checkpoint('langgraph_invoke_complete', 'LangGraph execution completed');
+      // timer.checkpoint('langgraph_invoke_complete', 'LangGraph execution completed');
       
       // Stop any active filler sequences
       fillerResponseService.stopFillerSequence(streamSid);
 
-      timer.checkpoint('result_processing', 'Processing LangGraph result');
+      // timer.checkpoint('result_processing', 'Processing LangGraph result');
       
       // Extract response from result
       const messages = result.messages || [];
       const lastMessage = messages[messages.length - 1];
       const response = lastMessage?.content || "I'm sorry, I couldn't process that request.";
-      timer.checkpoint('response_extracted', 'Response extracted from result', { responseLength: response.length });
+      // timer.checkpoint('response_extracted', 'Response extracted from result', { responseLength: response.length });
 
       // Check if workflow should end
       const shouldEndCall = this.shouldEndCall(result, response);
-      timer.checkpoint('end_call_check', 'End call decision made', { shouldEndCall });
+      // timer.checkpoint('end_call_check', 'End call decision made', { shouldEndCall });
 
-      timer.checkpoint('session_save_start', 'Saving conversation history to session');
-      // Save conversation history to session for context continuity
+      // timer.checkpoint('session_save_start', 'Saving conversation history to session');
+      // Save conversation history and state to session for context continuity
       const allMessages = result.messages || [];
+      const finalConversationState = result.conversationState || {};
       sessionManager.updateSession(streamSid, {
         workingMemory: {
           ...session?.workingMemory,
           conversationMessages: allMessages,
+          conversationState: finalConversationState,
           lastActivity: new Date()
         }
       });
-      timer.checkpoint('session_save_complete', 'Session saved successfully');
+      // timer.checkpoint('session_save_complete', 'Session saved successfully');
 
       const summary = timer.getSummary();
-      timer.checkpoint('workflow_complete', 'Appointment workflow completed successfully', { totalTime: summary.totalTime });
+      // timer.checkpoint('workflow_complete', 'Appointment workflow completed successfully', { totalTime: summary.totalTime });
       timer.printSummary();
 
       return {
@@ -196,7 +203,7 @@ class LangGraphAppointmentWorkflow {
       };
 
     } catch (error) {
-      timer.checkpoint('workflow_error', 'Error in appointment workflow', { error: error.message });
+      // timer.checkpoint('workflow_error', 'Error in appointment workflow', { error: error.message });
       timer.printSummary();
 
       return {
@@ -207,6 +214,141 @@ class LangGraphAppointmentWorkflow {
         streamSid: streamSid,
         timingData: timer.getSummary()
       };
+    }
+  }
+
+  /**
+   * Process LangGraph with streaming and sentence-level TTS
+   */
+  async processWithStreaming(inputState, config, streamSid, timer) {
+    try {
+      // Get MediaStream for TTS streaming
+      const sessionManager = require('../../services/sessionManager');
+      const mediaStream = sessionManager.getMediaStream(streamSid);
+      
+      if (!mediaStream) {
+        // Fallback to non-streaming if no mediaStream
+        return await this.graph.invoke(inputState, {
+          ...config,
+          recursionLimit: 10,
+          streamMode: "values"
+        });
+      }
+
+      // timer.checkpoint('streaming_setup', 'Setting up streaming response pipeline');
+      
+      // Set up sentence accumulation for TTS streaming
+      let accumulatedText = '';
+      let isFirstSentence = true;
+      const azureTTSService = require('../../services/azureTTSService');
+      
+      // Function to handle complete sentences
+      const processSentence = async (sentence) => {
+        if (sentence.trim()) {
+          // timer.checkpoint('sentence_tts_start', 'Starting TTS for sentence', { 
+          //   sentenceLength: sentence.length,
+          //   isFirst: isFirstSentence 
+          // });
+          
+          // Start TTS immediately for this sentence
+          if (isFirstSentence) {
+            mediaStream.speaking = true;
+            mediaStream.ttsStart = Date.now();
+            mediaStream.firstByte = true;
+            isFirstSentence = false;
+          }
+          
+          try {
+            // Get session for language info
+            const sessionManager = require('../../services/sessionManager');
+            const sessionData = sessionManager.getSession(streamSid);
+            
+            await azureTTSService.synthesizeStreaming(
+              sentence,
+              mediaStream,
+              sessionData?.language || 'english'
+            );
+            // timer.checkpoint('sentence_tts_complete', 'Sentence TTS completed');
+          } catch (error) {
+            // timer.checkpoint('sentence_tts_error', 'Sentence TTS failed', { error: error.message });
+          }
+        }
+      };
+      
+      // Function to detect complete sentences
+      const detectSentences = (text) => {
+        const sentences = [];
+        const sentenceEnders = /[.!?]\s+/g;
+        let lastIndex = 0;
+        let match;
+        
+        while ((match = sentenceEnders.exec(text)) !== null) {
+          const sentence = text.substring(lastIndex, match.index + 1).trim();
+          if (sentence) {
+            sentences.push(sentence);
+          }
+          lastIndex = sentenceEnders.lastIndex;
+        }
+        
+        // Return sentences and remaining text
+        const remaining = text.substring(lastIndex).trim();
+        return { sentences, remaining };
+      };
+
+      // timer.checkpoint('graph_streaming_start', 'Starting graph execution with streaming');
+      
+      // Execute graph with streaming mode
+      const stream = await this.graph.stream(inputState, {
+        ...config,
+        recursionLimit: 10,
+        streamMode: "values"
+      });
+      
+      let finalResult = null;
+      
+      // Process streaming chunks
+      for await (const chunk of stream) {
+        if (chunk.messages && chunk.messages.length > 0) {
+          const lastMessage = chunk.messages[chunk.messages.length - 1];
+          
+          if (lastMessage.content && typeof lastMessage.content === 'string') {
+            accumulatedText += lastMessage.content;
+            
+            // Check for complete sentences
+            const { sentences, remaining } = detectSentences(accumulatedText);
+            
+            // Process complete sentences immediately
+            for (const sentence of sentences) {
+              await processSentence(sentence);
+            }
+            
+            // Keep remaining incomplete text
+            accumulatedText = remaining;
+          }
+          
+          // Update final result
+          finalResult = chunk;
+        }
+      }
+      
+      // Process any remaining text
+      if (accumulatedText.trim()) {
+        await processSentence(accumulatedText);
+      }
+      
+      // timer.checkpoint('graph_streaming_complete', 'Graph streaming execution completed');
+      
+      return finalResult || { messages: [] };
+      
+    } catch (error) {
+      // timer.checkpoint('streaming_error', 'Error in streaming processing', { error: error.message });
+      
+      // Fallback to regular processing
+      return await this.graph.invoke(inputState, {
+        ...config,
+        recursionLimit: 10,
+        streamMode: "values"
+      });
     }
   }
 
@@ -233,25 +375,35 @@ class LangGraphAppointmentWorkflow {
   shouldEndCall(result, response) {
     const messages = result.messages || [];
     const lastMessage = messages[messages.length - 1];
+    const conversationState = result.conversationState || {};
 
-    // Check for end_call tool
+    // Check for end_call tool (not analyze_end_call_intent)
     const hasEndCallTool = lastMessage?.tool_calls?.some(call => call.name === 'end_call');
+    
+    // Check for natural end call detection - only end if we have a goodbye message
+    const naturalEndCall = conversationState.endCallEligible && conversationState.assistanceOffered;
     
     // Only end call if explicitly requested via tool or explicit goodbye
     // Don't end call on phrases like "thank you" in the middle of conversation
-    const explicitGoodbyePatterns = ['goodbye', 'bye bye', 'have a great day', 'see you later', 'talk to you later'];
+    const explicitGoodbyePatterns = ['goodbye', 'bye bye', 'have a great day', 'see you later', 'talk to you later', 'thank you for using', 'feel free to reach out'];
     const hasExplicitGoodbye = explicitGoodbyePatterns.some(pattern => 
-      response.toLowerCase().includes(pattern) && 
-      response.toLowerCase().trim().endsWith(pattern)
+      response.toLowerCase().includes(pattern)
     );
+
+    // Only end call if we have an explicit goodbye message (not just natural end call detection)
+    const shouldEnd = hasEndCallTool || hasExplicitGoodbye;
 
     console.log('🔍 shouldEndCall check:', {
       hasEndCallTool,
       hasExplicitGoodbye,
-      response: response.substring(0, 100)
+      naturalEndCall,
+      endCallEligible: conversationState.endCallEligible,
+      assistanceOffered: conversationState.assistanceOffered,
+      response: response.substring(0, 100),
+      shouldEnd
     });
 
-    return hasEndCallTool || hasExplicitGoodbye;
+    return shouldEnd;
   }
 
   /**

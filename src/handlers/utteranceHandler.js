@@ -3,21 +3,24 @@ const azureTTSService = require('../services/azureTTSService');
 const sseService = require('../services/sseService');
 const sessionManager = require('../services/sessionManager');
 const { detectLanguage } = require('../utils/languageDetection');
-const { globalTimingLogger } = require('../utils/timingLogger');
-const performanceLogger = require('../utils/performanceLogger');
 
 // Process final utterance from STT
 async function processUtterance(utterance, mediaStream) {
   try {
-    globalTimingLogger.startOperation('Utterance Processing');
-    performanceLogger.startTiming(mediaStream.streamSid, 'stt');
+    // Check if call is ending - don't process new input
+    if (mediaStream.isEnding) {
+      console.log('🚫 Ignoring utterance - call is ending:', utterance);
+      return;
+    }
+    
+    // Begin processing utterance
     
     // Update language through global language service
     const currentLanguage = mediaStream.updateLanguage(utterance, 'transcript_analysis');
 
     // CRITICAL FIX: Check greeting state properly
     if (mediaStream.hasGreeted && mediaStream.greetingSent) {
-      globalTimingLogger.logMoment('Processing post-greeting utterance');
+      // Processing post-greeting utterance
       
       // Mark that we're no longer awaiting first input
       mediaStream.awaitingFirstInput = false;
@@ -26,7 +29,7 @@ async function processUtterance(utterance, mediaStream) {
       const { runCallerIdentificationGraph } = require('../graph');
       
       // Run intent classification for post-greeting utterances
-      globalTimingLogger.logMoment('Running intent classification');
+      // Running intent classification
       
       // Generate or use existing thread ID for conversation persistence
       if (!mediaStream.threadId) {
@@ -38,33 +41,18 @@ async function processUtterance(utterance, mediaStream) {
       if (session.langChainSession && 
           session.langChainSession.sessionActive) {
         
-        globalTimingLogger.logMoment('Active LangChain workflow - processing with existing session');
+        // Active LangChain workflow - processing with existing session
         
         try {
           globalTimingLogger.startOperation('LangChain Continuation');
-          
-          let workflowResult;
-          if (session.langChainSession.workflowType === 'delay_notification') {
-            // Handle teammate delay workflow
-            const { continueDelayWorkflow } = require('../workflows/TeamDelayWorkflow');
-            const workflowData = session.langChainSession.workflowData || {};
-            workflowResult = await continueDelayWorkflow(
-              mediaStream.streamSid,
-              utterance,
-              workflowData
-            );
-          } else {
-            // Handle customer workflow
-            workflowResult = await session.langChainSession.handler.continueWorkflow(
-              session.langChainSession.sessionId,
-              utterance,
-              mediaStream.streamSid
-            );
-          }
-          
+          const workflowResult = await session.langChainSession.handler.continueWorkflow(
+            session.langChainSession.sessionId,
+            utterance,
+            mediaStream.streamSid
+          );
           globalTimingLogger.endOperation('LangChain Continuation');
           
-          globalTimingLogger.logModelOutput(workflowResult.response, 'LANGCHAIN RESPONSE');
+          // LANGCHAIN RESPONSE
           
           // Set up MediaStream for TTS
           mediaStream.currentMediaStream = mediaStream;
@@ -72,31 +60,49 @@ async function processUtterance(utterance, mediaStream) {
           mediaStream.ttsStart = Date.now();
           mediaStream.firstByte = true;
           
-          globalTimingLogger.startOperation('Response TTS');
           await azureTTSService.synthesizeStreaming(
             workflowResult.response,
             mediaStream,
             mediaStream.language
           );
-          globalTimingLogger.endOperation('Response TTS');
           
           // End call if workflow completed
+          console.log('🔍 DEBUG utteranceHandler - workflowResult:', {
+            hasEndCall: 'endCall' in workflowResult,
+            endCallValue: workflowResult.endCall,
+            response: workflowResult.response?.substring(0, 50) + '...'
+          });
+          
           if (workflowResult.endCall) {
-            globalTimingLogger.logMoment('Ending call - LangChain workflow complete');
+            // Ending call - LangChain workflow complete
+            console.log('🎯 Call ending detected - stopping input processing and closing connection');
             sessionManager.setLangChainSession(mediaStream.streamSid, null);
+            
+            // Immediately stop processing new input
+            mediaStream.isEnding = true;
+            
+            // Calculate delay based on message length (roughly 150 words per minute = 2.5 words per second)
+            const messageLength = workflowResult.response?.length || 0;
+            const estimatedWords = messageLength / 5; // Rough estimate: 5 characters per word
+            const estimatedSeconds = Math.max(3, Math.ceil(estimatedWords / 2.5)); // At least 3 seconds
+            const delayMs = estimatedSeconds * 1000;
+            
+            console.log(`🔚 Scheduling connection closure in ${delayMs}ms (${estimatedSeconds}s) for message of ${messageLength} chars`);
             
             setTimeout(() => {
               if (mediaStream.connection && !mediaStream.connection.closed) {
+                console.log('🔚 Closing connection after TTS delay');
                 mediaStream.connection.close();
               }
-            }, 3000);
+            }, delayMs);
+          } else {
+            console.log('🔍 DEBUG utteranceHandler - endCall is false, continuing conversation');
           }
           
-          globalTimingLogger.endOperation('Utterance Processing');
           return; // Exit early, don't go to main graph
           
         } catch (error) {
-          globalTimingLogger.logError(error, 'LangChain Continuation');
+          console.error('LangChain Continuation error:', error);
           // Fall through to main graph as fallback
         }
       }
@@ -163,7 +169,7 @@ async function processUtterance(utterance, mediaStream) {
           ttsStarted = true;
           actualGraphResult = result;
           
-          globalTimingLogger.logModelOutput(result.systemPrompt, 'INTENT RESPONSE');
+          // INTENT RESPONSE
           
           // 🔥 Trigger immediate TTS prewarming
           const ttsPrewarmer = require('../services/ttsPrewarmer');
@@ -176,21 +182,19 @@ async function processUtterance(utterance, mediaStream) {
           mediaStream.firstByte = true;
         
           try {
-            globalTimingLogger.startOperation('Response TTS');
             await azureTTSService.synthesizeStreaming(
               result.systemPrompt,
               mediaStream,
               mediaStream.language
             );
-            globalTimingLogger.endOperation('Response TTS');
           } catch (error) {
-            globalTimingLogger.logError(error, 'Response TTS');
+            console.error('Response TTS error:', error);
           }
           
           return result;
         }
       }).catch((error) => {
-        globalTimingLogger.logError(error, 'Immediate TTS');
+        console.error('Immediate TTS error:', error);
         return null;
       });
       
@@ -242,11 +246,7 @@ async function processUtterance(utterance, mediaStream) {
         });
       }
       
-      globalTimingLogger.endOperation('Utterance Processing');
-      performanceLogger.endTiming(mediaStream.streamSid, 'stt');
-      
-      // Log structured performance metrics
-      performanceLogger.logPerformanceMetrics(mediaStream.streamSid);
+      // Utterance processing complete
       return;
     }
     

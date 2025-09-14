@@ -1,4 +1,5 @@
 const chalk = require('chalk');
+const DISABLE_GLOBAL_TIMING_LOGS = true;
 
 class TimingLogger {
   constructor() {
@@ -18,6 +19,7 @@ class TimingLogger {
 
   // Start timing an operation
   startOperation(operationName) {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return;
     this.operationStartTimes.set(operationName, Date.now());
     console.log('');
     console.log(chalk.cyan(`⏱️  [${this.getCurrentTime()}] START: ${operationName}`));
@@ -25,6 +27,7 @@ class TimingLogger {
 
   // End timing an operation and show duration
   endOperation(operationName) {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return 0;
     const startTime = this.operationStartTimes.get(operationName);
     if (startTime) {
       const duration = Date.now() - startTime;
@@ -39,6 +42,7 @@ class TimingLogger {
 
   // Log a moment with timestamp
   logMoment(message, color = 'yellow') {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return;
     const timestamp = this.getCurrentTime();
     let coloredMessage;
     
@@ -76,18 +80,21 @@ class TimingLogger {
 
   // Log user input
   logUserInput(transcript) {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return;
     const timestamp = this.getCurrentTime();
     console.log(chalk.blue(`👤 [${timestamp}] USER INPUT: "${transcript}"`));
   }
 
   // Log model output
   logModelOutput(output, type = 'RESPONSE') {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return;
     const timestamp = this.getCurrentTime();
     console.log(chalk.magenta(`🤖 [${timestamp}] ${type}: "${output}"`));
   }
 
   // Log intent classification
   logIntentClassification(intent, confidence = null) {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return;
     const timestamp = this.getCurrentTime();
     const confidenceText = confidence ? ` (${(confidence * 100).toFixed(1)}%)` : '';
     console.log(chalk.yellow(`🎯 [${timestamp}] INTENT: ${intent}${confidenceText}`));
@@ -95,34 +102,40 @@ class TimingLogger {
 
   // Log filler word
   logFillerWord(filler) {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return;
     const timestamp = this.getCurrentTime();
     console.log(chalk.cyan(`💬 [${timestamp}] FILLER: "${filler}"`));
   }
 
   // Log TTS events
   logTTSStart(text) {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return;
     const timestamp = this.getCurrentTime();
     console.log(chalk.green(`🔊 [${timestamp}] TTS START: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`));
   }
 
   logTTSEnd() {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return;
     const timestamp = this.getCurrentTime();
     console.log(chalk.green(`🔇 [${timestamp}] TTS END`));
   }
 
   // Log workflow events
   logWorkflowStart(workflowName) {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return;
     const timestamp = this.getCurrentTime();
     console.log(chalk.magenta(`⚙️  [${timestamp}] WORKFLOW START: ${workflowName}`));
   }
 
   logWorkflowEnd(workflowName) {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return;
     const timestamp = this.getCurrentTime();
     console.log(chalk.magenta(`🏁 [${timestamp}] WORKFLOW END: ${workflowName}`));
   }
 
   // Log session events
   logSessionStart(sessionId) {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return;
     const timestamp = this.getCurrentTime();
     this.sessionStartTime = Date.now();
     console.log('');
@@ -131,6 +144,7 @@ class TimingLogger {
   }
 
   logSessionEnd() {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return;
     if (this.sessionStartTime) {
       const timestamp = this.getCurrentTime();
       const sessionDuration = ((Date.now() - this.sessionStartTime) / 1000).toFixed(2);
@@ -143,6 +157,7 @@ class TimingLogger {
 
   // Log errors
   logError(error, context) {
+    if (DISABLE_GLOBAL_TIMING_LOGS) return;
     const timestamp = this.getCurrentTime();
     console.log(chalk.red(`❌ [${timestamp}] ERROR in ${context}: ${error.message}`));
   }
