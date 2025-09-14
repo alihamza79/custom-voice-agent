@@ -4,6 +4,7 @@ const { CallerState } = require('./state/CallerState');
 const { greetingNode } = require('./nodes/greetingNode');
 const { customerIntentNode } = require('./nodes/customerIntentNode');
 const { teammateIntentNode } = require('./nodes/teammateIntentNode');
+const { outboundCustomerVerifyIntentNode } = require('./nodes/outboundCustomerVerifyIntentNode');
 const { globalTimingLogger } = require('../utils/timingLogger');
 
 let compiledGraph = null;
@@ -17,10 +18,17 @@ async function buildCallerGraph() {
     .addNode("greetingNode", greetingNode)
     .addNode("customerIntentNode", customerIntentNode)
     .addNode("teammateIntentNode", teammateIntentNode)
+    .addNode("outboundCustomerVerifyIntentNode", outboundCustomerVerifyIntentNode)
     .addConditionalEdges("greetingNode", (state) => {
       // If call should end, end it
       if (state.call_ended) {
         return END;
+      }
+      
+      // Check if this is an outbound call
+      if (state.callerInfo && state.callerInfo.isOutbound) {
+        console.log('📞 Routing outbound call to customer verification');
+        return "outboundCustomerVerifyIntentNode";
       }
       
       // CRITICAL FIX: If we have transcript and greeting sent, route based on caller type
@@ -47,8 +55,16 @@ async function buildCallerGraph() {
       return END;
     })
     .addConditionalEdges("teammateIntentNode", (state) => {
-      // After teammate intent classification, end the call for now
-      // In future, this will route to specific handler nodes based on intent
+      // After teammate intent classification, check if we need to make outbound call
+      if (state.call_ended && state.workflowData?.shouldMakeOutboundCall) {
+        // Route to outbound customer verification node
+        return "outboundCustomerVerifyIntentNode";
+      }
+      // Otherwise end the call
+      return END;
+    })
+    .addConditionalEdges("outboundCustomerVerifyIntentNode", (state) => {
+      // After customer verification, end the call
       return END;
     })
     .setEntryPoint("greetingNode");

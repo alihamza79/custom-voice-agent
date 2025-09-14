@@ -39,6 +39,29 @@ const greetingNode = RunnableLambda.from(async (state) => {
     };
   }
   
+  // CRITICAL FIX: Handle outbound calls
+  if (state.callerInfo && state.callerInfo.isOutbound) {
+    console.log('📞 Outbound call detected - generating customer verification greeting');
+    
+    // For outbound calls, we don't need to identify the caller
+    // The caller info should already be set by the outbound call service
+    const callerInfo = state.callerInfo;
+    
+    // Generate appropriate greeting for outbound call
+    const greeting = "Hello! This is regarding your appointment. Please hold while I connect you to our system.";
+    
+    return {
+      ...state,
+      callerInfo: callerInfo,
+      systemPrompt: greeting,
+      greeting_sent: true,
+      session_initialized: true,
+      conversation_state: 'active',
+      call_ended: false,
+      turn_count: (state.turn_count || 0) + 1
+    };
+  }
+  
   // CRITICAL FIX: Handle empty transcript (auto-greeting scenario)
   if (!state.transcript || state.transcript.trim() === '') {
     console.log('🎯 Empty transcript - generating auto-greeting');

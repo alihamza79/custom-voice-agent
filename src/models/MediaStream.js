@@ -49,6 +49,10 @@ class MediaStream {
     // Call termination tracking
     this.callTerminated = false; // Flag to prevent processing after termination
     
+    // Outbound call tracking
+    this.isOutboundCall = false;
+    this.outboundStreamSid = null;
+    
     // Current media stream reference
     this.currentMediaStream = null;
     

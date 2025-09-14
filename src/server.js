@@ -39,6 +39,7 @@ const wsserver = http.createServer(handleRequest);
 
 // Routes
 const outboundCallRoutes = require('./routes/outboundCallRoutes');
+const outboundWebSocketRoutes = require('./routes/outboundWebSocketRoutes');
 
 const mediaws = new WebSocketServer({
   httpServer: wsserver,
@@ -131,6 +132,37 @@ function routeOutboundCall(req, res) {
     outboundCallRoutes.healthCheck(req, res);
   } else if (method === 'POST' && url === '/hangup') {
     outboundCallRoutes.handleCallHangup(req, res);
+  } else if (method === 'POST' && url === '/twiml-outbound-websocket-call') {
+    outboundWebSocketRoutes.handleWebSocketTwiMLGeneration(req, res);
+  } else if (method === 'POST' && url === '/twiml') {
+    // Handle both regular TwiML and outbound WebSocket TwiML
+    if (req.query?.streamSid && req.query.streamSid.startsWith('outbound_')) {
+      console.log('📞 [TWiML_ROUTE] Handling outbound WebSocket TwiML request');
+      outboundWebSocketRoutes.handleWebSocketTwiMLGeneration(req, res);
+    } else {
+      console.log('📞 [TWiML_ROUTE] Handling regular TwiML request');
+      // Handle regular TwiML (existing logic)
+      res.writeHead(200, { 'Content-Type': 'text/xml' });
+      res.end('<?xml version="1.0" encoding="UTF-8"?><Response><Say>Hello from TwiML</Say></Response>');
+    }
+  } else if (method === 'POST' && url === '/outbound-websocket-call-status') {
+    outboundWebSocketRoutes.handleOutboundCallStatus(req, res);
+  } else if (method === 'POST' && url === '/outbound-websocket-call-hangup') {
+    outboundWebSocketRoutes.handleOutboundCallHangup(req, res);
+  } else if (method === 'GET' && url === '/active-outbound-websocket-calls') {
+    outboundWebSocketRoutes.getActiveOutboundCalls(req, res);
+  } else if (method === 'GET' && url === '/outbound-websocket-health') {
+    outboundWebSocketRoutes.healthCheck(req, res);
+  } else if (method === 'GET' && url === '/test-twiml') {
+    // Test endpoint to verify TwiML generation
+    console.log('🧪 Testing TwiML generation endpoint...');
+    const testReq = {
+      method: 'POST',
+      url: '/twiml',
+      query: { streamSid: 'outbound_test_stream_123' },
+      body: {}
+    };
+    outboundWebSocketRoutes.handleWebSocketTwiMLGeneration(testReq, res);
   } else {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not Found');
@@ -299,13 +331,42 @@ dispatcher.onPost("/twiml", function (req, res) {
   Websocket Server
 */
 mediaws.on("connect", function (connection) {
+  console.log('📞 [WEBSOCKET_CONNECT] ==========================================');
+  console.log('📞 [WEBSOCKET_CONNECT] New WebSocket connection received');
+  console.log('📞 [WEBSOCKET_CONNECT] Connection resourceURL:', connection.resourceURL);
+  
+  // Extract URL parameters to identify outbound calls
+  const url = new URL(connection.resourceURL, 'http://localhost');
+  const streamSid = url.searchParams.get('streamSid');
+  const isOutbound = url.searchParams.get('isOutbound') === 'true';
+  
+  console.log('📞 [WEBSOCKET_CONNECT] Extracted parameters:', {
+    streamSid: streamSid,
+    isOutbound: isOutbound,
+    resourceURL: connection.resourceURL,
+    searchParams: Object.fromEntries(url.searchParams)
+  });
+  
   const mediaStream = new MediaStream(connection);
+  console.log('📞 [WEBSOCKET_CONNECT] MediaStream created successfully');
+  
+  // Set outbound call flag if this is an outbound call
+  if (isOutbound && streamSid) {
+    mediaStream.isOutboundCall = true;
+    mediaStream.outboundStreamSid = streamSid;
+    console.log('📞 [WEBSOCKET_CONNECT] Outbound call WebSocket connection established:', streamSid);
+    console.log('📞 [WEBSOCKET_CONNECT] MediaStream flags set:', {
+      isOutboundCall: mediaStream.isOutboundCall,
+      outboundStreamSid: mediaStream.outboundStreamSid
+    });
+  } else {
+    console.log('📞 [WEBSOCKET_CONNECT] Regular inbound call WebSocket connection');
+  }
   
   // LEGACY: Keep for backward compatibility
   currentMediaStream = mediaStream;
   
   // NEW: Will register with sessionManager when streamSid is available
-  console.log('📞 New WebSocket connection established');
 });
 
 // Start the server

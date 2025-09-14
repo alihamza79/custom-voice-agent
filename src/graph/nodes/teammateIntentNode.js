@@ -5,6 +5,7 @@ const { globalTimingLogger } = require('../../utils/timingLogger');
 const performanceLogger = require('../../utils/performanceLogger');
 const sessionManager = require('../../services/sessionManager');
 const googleCalendarService = require('../../services/googleCalendarService');
+const calendarPreloader = require('../../services/calendarPreloader');
 const { delayNotificationWorkflow } = require('../../workflows/TeamDelayWorkflow');
 
 const openai = new OpenAI();
@@ -53,6 +54,102 @@ const teammateIntentNode = RunnableLambda.from(async (state) => {
   // Log user input
   globalTimingLogger.logUserInput(state.transcript);
   
+  // CRITICAL: Skip intent classification if already in active LangChain workflow
+  let session = sessionManager.getSession(state.streamSid);
+  
+  // Create session if it doesn't exist
+  if (!session) {
+    console.log('🆕 Creating session for teammate intent classification');
+    sessionManager.createSession(state.streamSid);
+    session = sessionManager.getSession(state.streamSid);
+    console.log('🔍 Session after creation:', session ? 'EXISTS' : 'NULL');
+    
+    // Set caller info after session creation
+    if (session && state.callerInfo) {
+      sessionManager.setCallerInfo(state.streamSid, state.callerInfo);
+    }
+  } else {
+    console.log('✅ Session already exists for teammate intent classification');
+  }
+  
+  // DEBUG: Log session state
+  console.log('🔍 DEBUG Session state:', {
+    hasSession: !!session,
+    hasLangChainSession: !!(session?.langChainSession),
+    workflowActive: session?.langChainSession?.workflowActive,
+    workflowType: session?.langChainSession?.workflowType,
+    rawLangChainSession: session?.langChainSession
+  });
+  
+  if (session && session.langChainSession && session.langChainSession.workflowActive) {
+    globalTimingLogger.logMoment('Bypassing intent - already in active LangChain workflow');
+    
+    const callerInfo = session.callerInfo || {
+      name: state.callerInfo?.name || 'Teammate',
+      phoneNumber: state.phoneNumber,
+      type: state.callerInfo?.type || 'teammate',
+      email: state.callerInfo?.email || `${state.phoneNumber}@example.com`
+    };
+    
+    try {
+      globalTimingLogger.startOperation('Continue Workflow');
+      const { continueDelayWorkflow } = require('../../workflows/TeamDelayWorkflow');
+      const workflowData = session.langChainSession.workflowData || {};
+      const workflowResult = await continueDelayWorkflow(
+        state.streamSid,
+        state.transcript,
+        workflowData
+      );
+      globalTimingLogger.endOperation('Continue Workflow');
+      
+      // Handle workflow result
+      if (workflowResult && workflowResult.response) {
+        const conversation_history = [...(state.conversation_history || [])];
+        conversation_history.push({
+          role: 'assistant',
+          content: workflowResult.response,
+          timestamp: new Date().toISOString(),
+          type: 'workflow_continuation',
+          intent: 'delay_notification'
+        });
+        
+        // CRITICAL FIX: Read from updated session data, not old workflowResult
+        const updatedSession = sessionManager.getSession(state.streamSid);
+        const updatedWorkflowData = updatedSession?.langChainSession?.workflowData || {};
+        
+        // LOG: Call should end variable for workflow continuation
+        const shouldEndCall = workflowResult.call_ended || updatedWorkflowData.shouldEndCall || false;
+        console.log('📞 WORKFLOW_CONTINUATION_STATUS: shouldEndCall =', shouldEndCall, {
+          reason: shouldEndCall ? 'CALL WILL END (workflow continuation)' : 'CALL WILL CONTINUE (workflow continuation)',
+          workflowResultCallEnded: workflowResult.call_ended,
+          updatedWorkflowDataShouldEndCall: updatedWorkflowData.shouldEndCall,
+          updatedWorkflowDataCallEnded: updatedWorkflowData.call_ended,
+          workflowDataShouldEndCall: workflowResult.workflowData?.shouldEndCall,
+          workflowDataCallEnded: workflowResult.workflowData?.call_ended
+        });
+        
+        // Set workflowData for the main intent classification section
+        workflowData = updatedWorkflowData;
+        
+        return {
+          ...state,
+          intent: 'delay_notification',
+          systemPrompt: workflowResult.response,
+          workflowData: updatedWorkflowData, // Use updated session data
+          endCall: shouldEndCall, // Use endCall to match customer approach
+          call_ended: shouldEndCall, // Keep both for compatibility
+          conversation_history: conversation_history,
+          last_system_response: workflowResult.response,
+          turn_count: (state.turn_count || 0) + 1,
+          conversation_state: shouldEndCall ? 'ended' : 'workflow'
+        };
+      }
+    } catch (error) {
+      globalTimingLogger.logError(error, 'Continue Workflow');
+      console.error('Error continuing workflow:', error);
+    }
+  }
+  
   // Only process if we have a transcript from the teammate
   if (!state.transcript || state.transcript.trim() === '') {
     globalTimingLogger.logMoment('No transcript provided for teammate intent classification');
@@ -74,7 +171,8 @@ const teammateIntentNode = RunnableLambda.from(async (state) => {
       ...state,
       intent: 'unknown',
       systemPrompt: errorResponse,
-      call_ended: false,
+      endCall: false, // Use endCall to match customer approach
+      call_ended: false, // Keep both for compatibility
       conversation_history: conversation_history,
       last_system_response: errorResponse,
       turn_count: (state.turn_count || 0) + 1
@@ -214,6 +312,83 @@ Classify this into one of the 5 categories.`;
         // Store caller info in session
         sessionManager.setCallerInfo(state.streamSid, callerInfo);
 
+        // 🚀 PERFORMANCE OPTIMIZATION: Use calendar preloader for optimized fetching
+        // Check if calendar data is already available or start preload
+        if (session && !session.preloadedAppointments) {
+          console.log('🚀 Using calendar preloader for faster response...');
+          
+          // Start preload in background - don't await to keep response fast
+          calendarPreloader.startPreloading(state.streamSid, callerInfo).catch(error => {
+            console.warn('⚠️ Calendar preload failed:', error.message);
+          });
+        } else if (session?.preloadedAppointments) {
+          console.log(`⚡ Calendar data already available: ${session.preloadedAppointments.length} appointments`);
+        }
+
+        // INTELLIGENT GENERIC FILLER: Send appropriate filler based on intent
+        // Context-based humanistic filler words for delay notification
+        const fillers = [
+          "Let me pull up your appointments",
+          "Checking your schedule",
+          "Let me see what meetings you have",
+          "Accessing your calendar",
+          "Looking at your upcoming meetings",
+          "Reviewing your schedule",
+          "Getting your appointment details",
+          "Checking what you have planned",
+          "Looking up your meetings",
+          "Fetching your calendar info"
+        ];
+        const immediateResponse = fillers[Math.floor(Math.random() * fillers.length)];
+        
+        console.log('⚡ Sending intelligent generic filler while processing workflow...');
+        
+        // SPEAK GENERIC FILLER IMMEDIATELY - PARALLEL TO LangChain workflow
+        globalTimingLogger.logFillerWord(immediateResponse);
+        
+        // Set a flag to prevent duplicate fillers in workflow
+        const currentSession = sessionManager.getSession(state.streamSid);
+        if (currentSession) {
+          currentSession.fillerAlreadySent = true;
+        }
+        
+        // Start filler speaking in parallel (don't await it)
+        const fillerPromise = (async () => {
+          try {
+            const { getCurrentMediaStream } = require('../../server');
+            const mediaStream = getCurrentMediaStream();
+            
+            if (mediaStream) {
+              globalTimingLogger.startOperation('Filler TTS');
+              
+              // Set up mediaStream for TTS
+              mediaStream.speaking = true;
+              mediaStream.ttsStart = Date.now();
+              mediaStream.firstByte = true;
+              mediaStream.currentMediaStream = mediaStream;
+              
+              // Speak the generic filler immediately
+              const azureTTSService = require('../../services/azureTTSService');
+              await azureTTSService.synthesizeStreaming(
+                immediateResponse,
+                mediaStream,
+                state.language || 'english'
+              );
+              globalTimingLogger.endOperation('Filler TTS');
+            } else {
+              globalTimingLogger.logError(new Error('No mediaStream available'), 'Filler TTS');
+            }
+          } catch (error) {
+            globalTimingLogger.logError(error, 'Filler TTS');
+          }
+        })();
+        
+        // Don't await fillerPromise - let it run in parallel
+        globalTimingLogger.logMoment('Filler started in parallel - continuing with delay workflow');
+        
+        // Small delay to ensure filler starts first
+        await new Promise(resolve => setTimeout(resolve, 50));
+
         // Check Google Calendar service health first
         const healthCheck = await googleCalendarService.healthCheck();
         console.log('🔍 DEBUG: Google Calendar health check:', healthCheck);
@@ -287,30 +462,27 @@ Classify this into one of the 5 categories.`;
     });
     
     // Check if workflow indicates call should end OR if system says goodbye/thank you
-    const systemSaysGoodbye = workflowResponse.toLowerCase().includes('goodbye') ||
-                             workflowResponse.toLowerCase().includes('have a great day') ||
-                             workflowResponse.toLowerCase().includes('thank you') ||
-                             workflowResponse.toLowerCase().includes('thank u') ||
-                             workflowResponse.toLowerCase().includes('bye') ||
-                             workflowResponse.toLowerCase().includes('i will inform the customer') ||
-                             workflowResponse.toLowerCase().includes('send you the text msg');
-    
+    // Use same simple logic as customer intent node
     const shouldEndCall = workflowData?.shouldEndCall || 
                          workflowData?.call_ended || 
-                         systemSaysGoodbye;
+                         workflowResponse.toLowerCase().includes('goodbye') ||
+                         workflowResponse.toLowerCase().includes('have a great day');
     
-    console.log('🔍 DEBUG: Teammate intent node call termination check:', {
+    console.log('🔍 DEBUG: Teammate intent node call termination check (customer approach):', {
       workflowDataShouldEndCall: workflowData?.shouldEndCall,
       workflowDataCallEnded: workflowData?.call_ended,
-      systemSaysGoodbye: systemSaysGoodbye,
       responseContainsGoodbye: workflowResponse.toLowerCase().includes('goodbye'),
       responseContainsGreatDay: workflowResponse.toLowerCase().includes('have a great day'),
-      responseContainsThankYou: workflowResponse.toLowerCase().includes('thank you'),
-      responseContainsThankU: workflowResponse.toLowerCase().includes('thank u'),
-      responseContainsBye: workflowResponse.toLowerCase().includes('bye'),
-      responseContainsInformCustomer: workflowResponse.toLowerCase().includes('i will inform the customer'),
-      responseContainsTextMsg: workflowResponse.toLowerCase().includes('send you the text msg'),
       finalShouldEndCall: shouldEndCall
+    });
+    
+    // LOG: Call should end variable for debugging
+    console.log('📞 CALL_ENDING_STATUS: shouldEndCall =', shouldEndCall, {
+      reason: shouldEndCall ? 'CALL WILL END' : 'CALL WILL CONTINUE',
+      workflowDataShouldEndCall: workflowData?.shouldEndCall,
+      workflowDataCallEnded: workflowData?.call_ended,
+      responseGoodbye: workflowResponse.toLowerCase().includes('goodbye'),
+      responseGreatDay: workflowResponse.toLowerCase().includes('have a great day')
     });
     
     const result = {
@@ -320,7 +492,8 @@ Classify this into one of the 5 categories.`;
       systemPrompt: workflowResponse,
       workflowData: workflowData,
       workflowCompleted: classifiedIntent !== 'no_intent_detected',
-      call_ended: shouldEndCall,
+      endCall: shouldEndCall, // Use endCall instead of call_ended to match customer approach
+      call_ended: shouldEndCall, // Keep both for compatibility
       conversation_history: conversation_history,
       last_system_response: workflowResponse,
       turn_count: (state.turn_count || 0) + 1,
@@ -354,7 +527,8 @@ Classify this into one of the 5 categories.`;
       ...state,
       intent: 'others',
       systemPrompt: errorResponse,
-      call_ended: true,
+      endCall: true, // Use endCall to match customer approach
+      call_ended: true, // Keep both for compatibility
       conversation_history: conversation_history,
       last_system_response: errorResponse,
       turn_count: (state.turn_count || 0) + 1,

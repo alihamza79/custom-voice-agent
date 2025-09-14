@@ -3,6 +3,7 @@ const OpenAI = require('openai');
 const googleCalendarService = require('../services/googleCalendarService');
 const outboundCallService = require('../services/outboundCallService');
 const outboundCallSession = require('../services/outboundCallSession');
+const outboundWebSocketService = require('../services/outboundWebSocketService');
 const databaseConnection = require('../services/databaseConnection');
 const callTerminationService = require('../services/callTerminationService');
 const { globalTimingLogger } = require('../utils/timingLogger');
@@ -10,31 +11,26 @@ const performanceLogger = require('../utils/performanceLogger');
 
 const openai = new OpenAI();
 
-// Robust call termination function - IMMEDIATE WEBSOCKET CLOSE
+// Simple call termination function - COPY FROM CUSTOMER APPROACH
 async function terminateCallRobustly(streamSid, delay = 0) {
-  console.log('📞 Initiating robust call termination...');
+  console.log('📞 Initiating simple call termination (customer approach)...');
   
   try {
     const sessionManager = require('../services/sessionManager');
     const session = sessionManager.getSession(streamSid);
     
     if (session && session.mediaStream) {
-      // IMMEDIATELY: Mark call as terminated and close WebSocket
-      console.log('🔚 Marking call as terminated and closing WebSocket immediately');
-      session.mediaStream.markCallTerminated();
-      session.mediaStream.close();
-    }
-    
-    // THEN: Call Twilio hangup method (in background)
-    try {
-      const terminationResult = await callTerminationService.endCallByStreamSid(streamSid);
-      if (terminationResult.success) {
-        console.log('✅ Call terminated successfully using Twilio method');
-      } else {
-        console.log('❌ Call termination failed:', terminationResult.error);
-      }
-    } catch (error) {
-      console.error('❌ Error during Twilio hangup:', error);
+      console.log('📞 Teammate call shouldEndCall detected - closing WebSocket connection');
+      
+      // Close the WebSocket connection to end the call (same as customer)
+      setTimeout(() => {
+        try {
+          session.mediaStream.close();
+          console.log('📞 WebSocket connection closed - teammate call ended');
+        } catch (error) {
+          console.error('❌ Error closing WebSocket connection:', error);
+        }
+      }, 3000); // Wait 3 seconds for TTS to complete
     }
     
   } catch (error) {
@@ -175,14 +171,7 @@ async function continueDelayWorkflow(streamSid, transcript, sessionData) {
       };
     }
     
-    // CRITICAL FIX: If call is ended, don't process response or update session
-    if (result.call_ended) {
-      console.log('🔚 Call ended - skipping response generation and session update');
-      globalTimingLogger.endOperation('Continue Delay Workflow');
-      return result;
-    }
-    
-    // Update session with new workflow data
+    // Update session with new workflow data BEFORE checking call_ended
     if (result.workflowData) {
       const sessionManager = require('../services/sessionManager');
       const session = sessionManager.getSession(streamSid);
@@ -195,7 +184,20 @@ async function continueDelayWorkflow(streamSid, transcript, sessionData) {
         
         // Update the session in sessionManager
         sessionManager.setLangChainSession(streamSid, session.langChainSession);
+        
+        console.log('🔍 DEBUG: Updated session with workflow data:', {
+          shouldEndCall: result.workflowData.shouldEndCall,
+          call_ended: result.call_ended,
+          step: result.workflowData.step
+        });
       }
+    }
+    
+    // CRITICAL FIX: If call is ended, return early but AFTER updating session
+    if (result.call_ended) {
+      console.log('🔚 Call ended - skipping response generation but session updated');
+      globalTimingLogger.endOperation('Continue Delay Workflow');
+      return result;
     }
     
     globalTimingLogger.endOperation('Continue Delay Workflow');
@@ -515,18 +517,8 @@ Respond with ONLY the new date and time in ISO format (YYYY-MM-DDTHH:mm:ss) or "
       // Teammate call ends immediately - outbound call will be made after
       const response = `Perfect! I've successfully delayed "${selectedAppointment.summary}" to ${formatDateTime(newDateTime.toISOString())}. Thank you for using the delay notification system!`;
       
-      // Schedule outbound call after teammate call ends
-      const customerPhone = '+923450448426'; // Customer number to call
-      const customerMessage = `Hello! This is regarding your appointment "${selectedAppointment.summary}". We need to reschedule it to ${formatDateTime(newDateTime.toISOString())}. Is this new time okay with you?`;
-      
-      setTimeout(async () => {
-        try {
-          console.log(`📞 Scheduling outbound call to ${customerPhone} after teammate call ends`);
-          await makeOutboundCallToCustomer(customerPhone, customerMessage, selectedAppointment, formatDateTime(newDateTime.toISOString()));
-        } catch (error) {
-          console.error('❌ Failed to make scheduled outbound call:', error);
-        }
-      }, 20000); // Wait 20 seconds after teammate call ends
+      // Outbound call will be scheduled when teammate says "no" to more help
+      // No need to schedule it here as it will be handled in handleMoreHelpRequest
       
       // Ask for more help instead of ending call immediately
       return handlePostUpdateFlow(selectedAppointment, newDateTime, callerInfo, language, streamSid, sessionData.appointments);
@@ -754,27 +746,39 @@ async function handleMoreHelpRequest(transcript, sessionData, streamSid) {
       
       if (appointmentData) {
         const { selectedAppointment, newDateTime } = appointmentData;
-        const customerPhone = '+923450448426';
+        const customerPhone = '+923450448426'; // Use Pakistani customer number
         const customerMessage = `Hello! This is regarding your appointment "${selectedAppointment.summary}". We need to reschedule it to ${formatDateTime(newDateTime.toISOString())}. Is this new time okay with you?`;
         
         // Schedule outbound call 20 seconds after teammate call ends
+        const teammateCallSid = sessionData.callerInfo.callSid; // Get callSid from session data
         setTimeout(async () => {
           try {
             console.log(`📞 Making outbound call to ${customerPhone} after teammate call ended`);
-            await makeOutboundCallToCustomer(customerPhone, customerMessage, selectedAppointment, formatDateTime(newDateTime.toISOString()));
+            await makeOutboundCallToCustomer(customerPhone, customerMessage, selectedAppointment, formatDateTime(newDateTime.toISOString()), teammateCallSid);
           } catch (error) {
             console.error('❌ Failed to make scheduled outbound call:', error);
           }
         }, 20000); // Wait 20 seconds after teammate call ends
       }
       
-      // Use robust call termination immediately
-      await terminateCallRobustly(streamSid);
+      // Use simple customer approach - just return call_ended flag
+      console.log('📞 Teammate call ending - using customer approach (no terminateCallRobustly)');
       
-      // CRITICAL FIX: Return immediately with call_ended: true, no response generation
+      // LOG: Call should end variable in workflow
+      console.log('📞 WORKFLOW_STATUS: shouldEndCall = true', {
+        reason: 'CALL WILL END (teammate said no to more help)',
+        call_ended: true,
+        shouldEndCall: true,
+        shouldMakeOutboundCall: true
+      });
+      
+      // Return call_ended flag like customer does, but also trigger outbound call
       return {
         call_ended: true, // Force call termination immediately
-        workflowData: { shouldEndCall: true }
+        workflowData: { 
+          shouldEndCall: true,
+          shouldMakeOutboundCall: true // Trigger outbound call after teammate call ends
+        }
       };
     } else if (needsMoreHelp === 'yes') {
       // Continue with more appointments
@@ -953,14 +957,19 @@ async function logCustomerResponse(responseData) {
   }
 }
 
-// Make outbound call to customer
-async function makeOutboundCallToCustomer(customerPhone, message, appointmentDetails, newTime) {
+// Make outbound call to customer using WebSocket
+async function makeOutboundCallToCustomer(customerPhone, message, appointmentDetails, newTime, teammateCallSid) {
   try {
-    console.log(`📞 Making outbound call to ${customerPhone}: ${message}`);
-    const result = await outboundCallSession.makeCallToCustomer(customerPhone, appointmentDetails, newTime);
+    console.log(`📞 Making WebSocket outbound call to ${customerPhone}: ${message}`);
+    const result = await outboundWebSocketService.makeWebSocketCallToCustomer(
+      customerPhone, 
+      appointmentDetails, 
+      newTime, 
+      teammateCallSid
+    );
     return result;
   } catch (error) {
-    console.error('❌ Failed to make outbound call:', error);
+    console.error('❌ Failed to make WebSocket outbound call:', error);
     return { success: false, error: error.message };
   }
 }

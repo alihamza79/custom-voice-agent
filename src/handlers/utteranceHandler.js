@@ -3,6 +3,7 @@ const azureTTSService = require('../services/azureTTSService');
 const sseService = require('../services/sseService');
 const sessionManager = require('../services/sessionManager');
 const { detectLanguage } = require('../utils/languageDetection');
+const { globalTimingLogger } = require('../utils/timingLogger');
 
 // Process final utterance from STT
 async function processUtterance(utterance, mediaStream) {
@@ -45,11 +46,25 @@ async function processUtterance(utterance, mediaStream) {
         
         try {
           globalTimingLogger.startOperation('LangChain Continuation');
-          const workflowResult = await session.langChainSession.handler.continueWorkflow(
-            session.langChainSession.sessionId,
-            utterance,
-            mediaStream.streamSid
-          );
+          
+          // Get the correct workflow function based on handler type
+          let workflowResult;
+          if (session.langChainSession.handler === 'delayNotificationWorkflow') {
+            const { continueDelayWorkflow } = require('../workflows/TeamDelayWorkflow');
+            workflowResult = await continueDelayWorkflow(
+              mediaStream.streamSid,
+              utterance,
+              session.langChainSession.workflowData
+            );
+          } else {
+            // Fallback for other workflow types
+            workflowResult = {
+              response: "I'm having trouble processing your request. Please try again.",
+              call_ended: false,
+              workflowData: { shouldEndCall: false }
+            };
+          }
+          
           globalTimingLogger.endOperation('LangChain Continuation');
           
           // LANGCHAIN RESPONSE
@@ -66,38 +81,52 @@ async function processUtterance(utterance, mediaStream) {
             mediaStream.language
           );
           
-          // End call if workflow completed
+          // End call if workflow completed - COPY CUSTOMER APPROACH
           console.log('🔍 DEBUG utteranceHandler - workflowResult:', {
             hasEndCall: 'endCall' in workflowResult,
             endCallValue: workflowResult.endCall,
+            call_ended: workflowResult.call_ended,
+            shouldEndCall: workflowResult.workflowData?.shouldEndCall,
             response: workflowResult.response?.substring(0, 50) + '...'
           });
           
-          if (workflowResult.endCall) {
-            // Ending call - LangChain workflow complete
-            console.log('🎯 Call ending detected - stopping input processing and closing connection');
-            sessionManager.setLangChainSession(mediaStream.streamSid, null);
-            
-            // Immediately stop processing new input
-            mediaStream.isEnding = true;
-            
-            // Calculate delay based on message length (roughly 150 words per minute = 2.5 words per second)
-            const messageLength = workflowResult.response?.length || 0;
-            const estimatedWords = messageLength / 5; // Rough estimate: 5 characters per word
-            const estimatedSeconds = Math.max(3, Math.ceil(estimatedWords / 2.5)); // At least 3 seconds
-            const delayMs = estimatedSeconds * 1000;
-            
-            console.log(`🔚 Scheduling connection closure in ${delayMs}ms (${estimatedSeconds}s) for message of ${messageLength} chars`);
-            
-            setTimeout(() => {
-              if (mediaStream.connection && !mediaStream.connection.closed) {
-                console.log('🔚 Closing connection after TTS delay');
-                mediaStream.connection.close();
-              }
-            }, delayMs);
-          } else {
-            console.log('🔍 DEBUG utteranceHandler - endCall is false, continuing conversation');
+      // Check for call ending using same logic as customer
+      const shouldEndCall = workflowResult.endCall || 
+                           workflowResult.call_ended || 
+                           workflowResult.workflowData?.shouldEndCall ||
+                           workflowResult.workflowData?.call_ended;
+      
+      // LOG: Call should end variable for LangChain workflow
+      console.log('📞 LANGCHAIN_WORKFLOW_STATUS: shouldEndCall =', shouldEndCall, {
+        reason: shouldEndCall ? 'CALL WILL END (LangChain workflow)' : 'CALL WILL CONTINUE (LangChain workflow)',
+        workflowResultEndCall: workflowResult.endCall,
+        workflowResultCallEnded: workflowResult.call_ended,
+        workflowDataShouldEndCall: workflowResult.workflowData?.shouldEndCall,
+        workflowDataCallEnded: workflowResult.workflowData?.call_ended
+      });
+      
+      if (shouldEndCall) {
+        // Ending call - LangChain workflow complete (CUSTOMER APPROACH)
+        console.log('🎯 Teammate call ending detected - using customer approach');
+        sessionManager.setLangChainSession(mediaStream.streamSid, null);
+        
+        // Immediately stop processing new input
+        mediaStream.isEnding = true;
+        
+        // Use same delay as customer (3 seconds)
+        const delayMs = 3000;
+        
+        console.log(`🔚 Scheduling connection closure in ${delayMs}ms for teammate call ending`);
+        
+        setTimeout(() => {
+          if (mediaStream.connection && !mediaStream.connection.closed) {
+            console.log('🔚 Closing connection after TTS delay');
+            mediaStream.connection.close();
           }
+        }, delayMs);
+      } else {
+        console.log('🔍 DEBUG utteranceHandler - endCall is false, continuing conversation');
+      }
           
           return; // Exit early, don't go to main graph
           
@@ -219,19 +248,48 @@ async function processUtterance(utterance, mediaStream) {
       // Check if call should end
       console.log('🔍 DEBUG: Checking call termination:', {
         hasResult: !!actualGraphResult,
+        endCall: actualGraphResult?.endCall,
         call_ended: actualGraphResult?.call_ended,
         conversation_state: actualGraphResult?.conversation_state,
         shouldEndCall: actualGraphResult?.workflowData?.shouldEndCall
       });
       
-      // Note: Call termination is now handled by Twilio's robust hangup method
-      // in the workflow functions (terminateCallRobustly), not here via WebSocket close
-      if (actualGraphResult && actualGraphResult.call_ended) {
-        console.log('📞 Call ending requested - handled by Twilio hangup method');
-      }
+      // Check for call ending using same logic as customer
+      const shouldEndCall = actualGraphResult?.endCall || 
+                           actualGraphResult?.call_ended || 
+                           actualGraphResult?.workflowData?.shouldEndCall ||
+                           actualGraphResult?.workflowData?.call_ended;
       
-      if (actualGraphResult && actualGraphResult.workflowData && actualGraphResult.workflowData.shouldEndCall) {
-        console.log('📞 Workflow shouldEndCall detected - handled by Twilio hangup method');
+      // LOG: Call should end variable for main graph processing
+      console.log('📞 MAIN_GRAPH_STATUS: shouldEndCall =', shouldEndCall, {
+        reason: shouldEndCall ? 'CALL WILL END (main graph)' : 'CALL WILL CONTINUE (main graph)',
+        actualGraphResultEndCall: actualGraphResult?.endCall,
+        actualGraphResultCallEnded: actualGraphResult?.call_ended,
+        workflowDataShouldEndCall: actualGraphResult?.workflowData?.shouldEndCall,
+        workflowDataCallEnded: actualGraphResult?.workflowData?.call_ended
+      });
+      
+      if (shouldEndCall) {
+        // Ending call - using customer approach
+        console.log('🎯 Call ending detected - using customer approach');
+        sessionManager.setLangChainSession(mediaStream.streamSid, null);
+        
+        // Immediately stop processing new input
+        mediaStream.isEnding = true;
+        
+        // Use same delay as customer (3 seconds)
+        const delayMs = 3000;
+        
+        console.log(`🔚 Scheduling connection closure in ${delayMs}ms for call ending`);
+        
+        setTimeout(() => {
+          if (mediaStream.connection && !mediaStream.connection.closed) {
+            console.log('🔚 Closing connection after TTS delay');
+            mediaStream.connection.close();
+          }
+        }, delayMs);
+      } else {
+        console.log('🔍 DEBUG utteranceHandler - endCall is false, continuing conversation');
       }
       
       // Broadcast intent classification result if available
@@ -298,28 +356,29 @@ async function processUtterance(utterance, mediaStream) {
     // Check if call should end after first utterance
     console.log('🔍 DEBUG: Checking first utterance call termination:', {
       hasResult: !!firstUtteranceResult,
+      endCall: firstUtteranceResult?.endCall,
       call_ended: firstUtteranceResult?.call_ended,
       conversation_state: firstUtteranceResult?.conversation_state,
       shouldEndCall: firstUtteranceResult?.workflowData?.shouldEndCall
     });
     
-    if (firstUtteranceResult && firstUtteranceResult.call_ended) {
-      console.log('📞 Call ending requested after first utterance - closing WebSocket connection');
-      
-      // Close the WebSocket connection to end the call
-      setTimeout(() => {
-        try {
-          mediaStream.close();
-          console.log('📞 WebSocket connection closed - call ended');
-        } catch (error) {
-          console.error('❌ Error closing WebSocket connection:', error);
-        }
-      }, 3000); // Wait 3 seconds for TTS to complete
-    }
+    // Check for call ending using same logic as customer
+    const shouldEndCall = firstUtteranceResult?.endCall || 
+                         firstUtteranceResult?.call_ended || 
+                         firstUtteranceResult?.workflowData?.shouldEndCall ||
+                         firstUtteranceResult?.workflowData?.call_ended;
     
-    // Additional check for shouldEndCall in workflowData
-    if (firstUtteranceResult && firstUtteranceResult.workflowData && firstUtteranceResult.workflowData.shouldEndCall) {
-      console.log('📞 First utterance workflow shouldEndCall detected - closing WebSocket connection');
+    // LOG: Call should end variable for first utterance
+    console.log('📞 FIRST_UTTERANCE_STATUS: shouldEndCall =', shouldEndCall, {
+      reason: shouldEndCall ? 'CALL WILL END (first utterance)' : 'CALL WILL CONTINUE (first utterance)',
+      firstUtteranceResultEndCall: firstUtteranceResult?.endCall,
+      firstUtteranceResultCallEnded: firstUtteranceResult?.call_ended,
+      workflowDataShouldEndCall: firstUtteranceResult?.workflowData?.shouldEndCall,
+      workflowDataCallEnded: firstUtteranceResult?.workflowData?.call_ended
+    });
+    
+    if (shouldEndCall) {
+      console.log('📞 Call ending requested after first utterance - closing WebSocket connection');
       
       // Close the WebSocket connection to end the call
       setTimeout(() => {
