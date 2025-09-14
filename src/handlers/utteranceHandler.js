@@ -7,6 +7,12 @@ const { detectLanguage } = require('../utils/languageDetection');
 // Process final utterance from STT
 async function processUtterance(utterance, mediaStream) {
   try {
+    // Check if call is ending - don't process new input
+    if (mediaStream.isEnding) {
+      console.log('🚫 Ignoring utterance - call is ending:', utterance);
+      return;
+    }
+    
     // Begin processing utterance
     
     // Update language through global language service
@@ -59,15 +65,36 @@ async function processUtterance(utterance, mediaStream) {
           );
           
           // End call if workflow completed
+          console.log('🔍 DEBUG utteranceHandler - workflowResult:', {
+            hasEndCall: 'endCall' in workflowResult,
+            endCallValue: workflowResult.endCall,
+            response: workflowResult.response?.substring(0, 50) + '...'
+          });
+          
           if (workflowResult.endCall) {
             // Ending call - LangChain workflow complete
+            console.log('🎯 Call ending detected - stopping input processing and closing connection');
             sessionManager.setLangChainSession(mediaStream.streamSid, null);
+            
+            // Immediately stop processing new input
+            mediaStream.isEnding = true;
+            
+            // Calculate delay based on message length (roughly 150 words per minute = 2.5 words per second)
+            const messageLength = workflowResult.response?.length || 0;
+            const estimatedWords = messageLength / 5; // Rough estimate: 5 characters per word
+            const estimatedSeconds = Math.max(3, Math.ceil(estimatedWords / 2.5)); // At least 3 seconds
+            const delayMs = estimatedSeconds * 1000;
+            
+            console.log(`🔚 Scheduling connection closure in ${delayMs}ms (${estimatedSeconds}s) for message of ${messageLength} chars`);
             
             setTimeout(() => {
               if (mediaStream.connection && !mediaStream.connection.closed) {
+                console.log('🔚 Closing connection after TTS delay');
                 mediaStream.connection.close();
               }
-            }, 3000);
+            }, delayMs);
+          } else {
+            console.log('🔍 DEBUG utteranceHandler - endCall is false, continuing conversation');
           }
           
           return; // Exit early, don't go to main graph

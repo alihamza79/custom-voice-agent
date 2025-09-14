@@ -131,6 +131,10 @@ class LangGraphAppointmentWorkflow {
       const sessionManager = require('../../services/sessionManager');
       const session = sessionManager.getSession(streamSid);
       const existingMessages = session?.workingMemory?.conversationMessages || [];
+      
+      // ENHANCED: Load conversation state from session
+      const existingConversationState = session?.workingMemory?.conversationState || {};
+      console.log('🔄 Loading conversation state from session:', existingConversationState);
       // timer.checkpoint('context_loaded', 'Conversation history loaded', { messageCount: existingMessages.length });
       
       // timer.checkpoint('message_prep', 'Preparing input state for LangGraph');
@@ -140,9 +144,10 @@ class LangGraphAppointmentWorkflow {
         name: "user"
       });
       
-      // Create input state for LangGraph with conversation history
+      // Create input state for LangGraph with conversation history and state
       const inputState = {
-        messages: [...existingMessages, newMessage]
+        messages: [...existingMessages, newMessage],
+        conversationState: existingConversationState
       };
 
       // timer.checkpoint('langgraph_invoke_start', 'Starting LangGraph execution with streaming LLM');
@@ -170,12 +175,14 @@ class LangGraphAppointmentWorkflow {
       // timer.checkpoint('end_call_check', 'End call decision made', { shouldEndCall });
 
       // timer.checkpoint('session_save_start', 'Saving conversation history to session');
-      // Save conversation history to session for context continuity
+      // Save conversation history and state to session for context continuity
       const allMessages = result.messages || [];
+      const finalConversationState = result.conversationState || {};
       sessionManager.updateSession(streamSid, {
         workingMemory: {
           ...session?.workingMemory,
           conversationMessages: allMessages,
+          conversationState: finalConversationState,
           lastActivity: new Date()
         }
       });
@@ -368,25 +375,35 @@ class LangGraphAppointmentWorkflow {
   shouldEndCall(result, response) {
     const messages = result.messages || [];
     const lastMessage = messages[messages.length - 1];
+    const conversationState = result.conversationState || {};
 
-    // Check for end_call tool
+    // Check for end_call tool (not analyze_end_call_intent)
     const hasEndCallTool = lastMessage?.tool_calls?.some(call => call.name === 'end_call');
+    
+    // Check for natural end call detection - only end if we have a goodbye message
+    const naturalEndCall = conversationState.endCallEligible && conversationState.assistanceOffered;
     
     // Only end call if explicitly requested via tool or explicit goodbye
     // Don't end call on phrases like "thank you" in the middle of conversation
-    const explicitGoodbyePatterns = ['goodbye', 'bye bye', 'have a great day', 'see you later', 'talk to you later'];
+    const explicitGoodbyePatterns = ['goodbye', 'bye bye', 'have a great day', 'see you later', 'talk to you later', 'thank you for using', 'feel free to reach out'];
     const hasExplicitGoodbye = explicitGoodbyePatterns.some(pattern => 
-      response.toLowerCase().includes(pattern) && 
-      response.toLowerCase().trim().endsWith(pattern)
+      response.toLowerCase().includes(pattern)
     );
+
+    // Only end call if we have an explicit goodbye message (not just natural end call detection)
+    const shouldEnd = hasEndCallTool || hasExplicitGoodbye;
 
     console.log('🔍 shouldEndCall check:', {
       hasEndCallTool,
       hasExplicitGoodbye,
-      response: response.substring(0, 100)
+      naturalEndCall,
+      endCallEligible: conversationState.endCallEligible,
+      assistanceOffered: conversationState.assistanceOffered,
+      response: response.substring(0, 100),
+      shouldEnd
     });
 
-    return hasEndCallTool || hasExplicitGoodbye;
+    return shouldEnd;
   }
 
   /**

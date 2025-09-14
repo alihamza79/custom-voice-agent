@@ -87,21 +87,37 @@ async function generateResponse(state, config = {}) {
     }
     // timer.checkpoint('context_built', 'Appointment context prepared', { appointmentCount: session?.preloadedAppointments?.length || 0 });
 
-    // Optimized system prompt for faster processing while maintaining functionality
+    // Enhanced system prompt with natural end call assistance
     const systemPrompt = `You help ${callerInfo.name || 'caller'} manage appointments.
 
 WORKFLOW:
 1. User wants changes → call get_appointments first
 2. User specifies appointment → ask for new details
 3. User confirms → execute shift_appointment/cancel_appointment immediately
+4. After task completion → offer further assistance naturally
+5. User responds to assistance offer → use analyze_end_call_intent to determine if they want to end
 
 RULES:
 - Be direct, ask ONE question at a time
 - ALWAYS confirm before making changes
 - Recognize confirmations: "yes", "correct", "do it", "go ahead"
 - Execute immediately after confirmation
+- After completing any task, naturally offer further assistance
 
-TOOLS: get_appointments, shift_appointment, cancel_appointment, end_call
+ASSISTANCE OFFER PATTERNS:
+- "Is there anything else I can help you with today?"
+- "Would you like me to help you with anything else?"
+- "Do you need assistance with anything else?"
+- "Is there anything more I can do for you?"
+
+HANDLING ASSISTANCE RESPONSES:
+- If user says "no", "thanks", "that's all", "I'm good" → call analyze_end_call_intent
+- If analyze_end_call_intent returns "ANALYSIS_RESULT: END_CALL" → respond with a polite goodbye and call end_call tool
+- If analyze_end_call_intent returns "ANALYSIS_RESULT: CONTINUE" → help them with their request
+- If user has new requests → help them with the new request
+- If user asks questions → answer their questions
+
+TOOLS: get_appointments, shift_appointment, cancel_appointment, end_call, analyze_end_call_intent
 
 APPOINTMENTS:${appointmentContext}
 
@@ -219,16 +235,28 @@ Now: ${new Date().toISOString()}`;
           
           // Create final response object
           const response = {
-            content: accumulatedContent,
+            content: accumulatedContent || "Thank you for using our appointment service. Have a great day!",
             name: "assistant"
           };
           
           if (hasToolCalls) {
             response.tool_calls = toolCalls;
           }
+
+          console.log('🤖 DEBUG generateResponse - Final response:', {
+            hasContent: !!response.content,
+            contentLength: response.content?.length || 0,
+            contentPreview: response.content?.substring(0, 100) + '...' || 'empty',
+            hasToolCalls: !!response.tool_calls?.length,
+            toolCallNames: response.tool_calls?.map(call => call.name) || []
+          });
+
+          // Track conversation state for natural end call detection
+          const conversationState = trackConversationState(response, state);
           
           return {
-            messages: [response]
+            messages: [response],
+            conversationState: conversationState
           };
           
         } catch (error) {
@@ -241,8 +269,12 @@ Now: ${new Date().toISOString()}`;
             console.log('✅ LLM_COMPLETE: LLM fallback invoke completed');
             // timer.checkpoint('llm_invoke_complete', 'LLM response received (fallback)', { hasToolCalls: !!response.tool_calls?.length });
             
+            // Track conversation state for natural end call detection
+            const conversationState = trackConversationState(response, state);
+            
             return {
-              messages: [response]
+              messages: [response],
+              conversationState: conversationState
             };
           } catch (fallbackError) {
             // timer.checkpoint('fallback_error', 'Fallback invoke also failed', { error: fallbackError.message });
@@ -264,10 +296,23 @@ Now: ${new Date().toISOString()}`;
           console.log('🚀 LLM_START: Starting LLM non-streaming invoke call');
           const response = await model.invoke(modelMessages);
           console.log('✅ LLM_COMPLETE: LLM non-streaming invoke completed');
+          
+          console.log('🤖 DEBUG generateResponse (non-streaming) - Response:', {
+            hasContent: !!response.content,
+            contentLength: response.content?.length || 0,
+            contentPreview: response.content?.substring(0, 100) + '...' || 'empty',
+            hasToolCalls: !!response.tool_calls?.length,
+            toolCallNames: response.tool_calls?.map(call => call.name) || []
+          });
+          
           // timer.checkpoint('llm_invoke_complete', 'LLM response received (non-streaming)', { hasToolCalls: !!response.tool_calls?.length });
           
+          // Track conversation state for natural end call detection
+          const conversationState = trackConversationState(response, state);
+          
           return {
-            messages: [response]
+            messages: [response],
+            conversationState: conversationState
           };
         } catch (error) {
           // timer.checkpoint('non_streaming_error', 'Non-streaming invoke failed', { error: error.message });
@@ -321,32 +366,154 @@ Now: ${new Date().toISOString()}`;
 }
 
 /**
- * Tools condition - determines routing based on tool calls
- * Following the Python pattern for conditional routing
+ * Tools condition - determines routing based on tool calls and natural end call detection
+ * Following the Python pattern for conditional routing with enhanced natural language processing
  */
-function toolsCondition(state) {
+async function toolsCondition(state) {
   const messages = state.messages || [];
   const lastMessage = messages[messages.length - 1];
+  const conversationState = state.conversationState || {};
 
+  console.log('🔍 DEBUG toolsCondition - Input:', {
+    hasLastMessage: !!lastMessage,
+    hasToolCalls: !!lastMessage?.tool_calls?.length,
+    toolCallNames: lastMessage?.tool_calls?.map(call => call.name) || [],
+    conversationState: {
+      assistanceOffered: conversationState.assistanceOffered,
+      isResponseToAssistance: conversationState.isResponseToAssistance,
+      endCallEligible: conversationState.endCallEligible
+    }
+  });
+
+  // Check for explicit tool calls first
   if (lastMessage?.tool_calls?.length > 0) {
+    console.log('🔧 Tool calls detected, checking for end_call...');
     // Check for end call signals
     if (lastMessage.tool_calls.some(call => call.name === 'end_call')) {
+      console.log('🎯 End call tool detected - routing to __end__');
       return "__end__";
     }
+    console.log('🔧 Non-end-call tools detected - routing to tools');
     return "tools";
   }
 
-  // Check for explicit end call signals in content
+  // NEW: Natural end call detection
+  if (conversationState.assistanceOffered && conversationState.isResponseToAssistance) {
+    console.log('🔍 Checking for natural end call detection...');
+    const shouldEndNaturally = await shouldEndCallNaturally(state, config);
+    console.log('🔍 Natural end call analysis result:', shouldEndNaturally);
+    if (shouldEndNaturally) {
+      console.log('🎯 Natural end call detected - ending conversation');
+      return "__end__";
+    }
+  }
+
+  // Check for explicit end call signals in content (legacy fallback)
   const content = lastMessage?.content?.toLowerCase() || '';
   if (content.includes('goodbye') || 
       content.includes('have a great day') || 
       content.includes('call is complete') ||
       content.includes('anything else today')) {
+    console.log('🎯 Explicit goodbye detected - ending conversation');
     return "__end__";
   }
 
   // Default: continue conversation (don't end unless explicitly told)  
+  console.log('🔚 No end conditions met - routing to __end__');
   return "__end__";
+}
+
+/**
+ * Analyze if the conversation should end naturally based on user response
+ */
+async function shouldEndCallNaturally(state, config = {}) {
+  const messages = state.messages || [];
+  const conversationState = state.conversationState || {};
+  
+  console.log('🔍 DEBUG shouldEndCallNaturally - Input:', {
+    messageCount: messages.length,
+    conversationState: {
+      assistanceOffered: conversationState.assistanceOffered,
+      isResponseToAssistance: conversationState.isResponseToAssistance,
+      endCallEligible: conversationState.endCallEligible
+    }
+  });
+  
+  // Get the last user message
+  const lastUserMessage = messages
+    .filter(m => m.name === 'user' || m.name === 'human')
+    .pop();
+  
+  console.log('🔍 Last user message:', {
+    hasMessage: !!lastUserMessage,
+    content: lastUserMessage?.content?.substring(0, 50) + '...' || 'none'
+  });
+  
+  if (!lastUserMessage || !lastUserMessage.content) {
+    console.log('🔍 No user message found - returning false');
+    return false;
+  }
+
+  // Check if we just offered assistance and got a response
+  if (!conversationState.assistanceOffered) {
+    console.log('🔍 Natural end call check: No assistance offered yet');
+    return false;
+  }
+  
+  // Check if this is a response to assistance offer
+  if (!conversationState.isResponseToAssistance) {
+    console.log('🔍 Natural end call check: Not a response to assistance offer');
+    return false;
+  }
+
+  try {
+    // Use the analyze_end_call_intent tool to determine intent
+    const { createCalendarTools } = require('./calendarTools');
+    const tools = await createCalendarTools('analysis');
+    const analyzeTool = tools.find(tool => tool.name === 'analyze_end_call_intent');
+    
+    if (!analyzeTool) {
+      console.warn('analyze_end_call_intent tool not found');
+      return false;
+    }
+
+    const analysisResult = await analyzeTool.invoke({
+      userResponse: lastUserMessage.content,
+      context: 'post_assistance_offer',
+      taskCompleted: conversationState.taskCompleted
+    });
+
+    const analysis = JSON.parse(analysisResult);
+    
+    console.log('🔍 End call analysis result:', {
+      shouldEndCall: analysis.shouldEndCall,
+      confidence: analysis.confidence,
+      reason: analysis.reason,
+      userResponse: lastUserMessage.content.substring(0, 50)
+    });
+
+    // Only end call if confidence is high enough
+    const shouldEnd = analysis.shouldEndCall && analysis.confidence >= 0.7;
+    
+    if (shouldEnd) {
+      // Immediately set isEnding flag to prevent new input processing
+      const streamSid = config?.configurable?.streamSid;
+      if (streamSid) {
+        const sessionManager = require('../../services/sessionManager');
+        const mediaStream = sessionManager.getMediaStream(streamSid);
+        if (mediaStream) {
+          console.log('🎯 Setting isEnding flag immediately - natural end call detected');
+          mediaStream.isEnding = true;
+        }
+      }
+    }
+    
+    return shouldEnd;
+
+  } catch (error) {
+    console.error('❌ Error in natural end call analysis:', error);
+    return false; // Conservative: don't end call on error
+  }
 }
 
 /**
@@ -361,7 +528,14 @@ async function executeTools(state, config = {}) {
     const messages = state.messages || [];
     const lastMessage = messages[messages.length - 1];
     
+    console.log('🔧 DEBUG executeTools - Input:', {
+      hasLastMessage: !!lastMessage,
+      hasToolCalls: !!lastMessage?.tool_calls?.length,
+      toolCallNames: lastMessage?.tool_calls?.map(call => call.name) || []
+    });
+    
     if (!lastMessage?.tool_calls?.length) {
+      console.log('🔧 No tool calls to execute - returning empty messages');
       // timer.checkpoint('no_tools', 'No tool calls to execute');
       return { messages: [] };
     }
@@ -378,11 +552,13 @@ async function executeTools(state, config = {}) {
 
     for (const toolCall of lastMessage.tool_calls) {
       const { name, args, id } = toolCall;
+      console.log(`🔧 Executing tool: ${name} with args:`, args);
       // timer.checkpoint(`tool_${name}_start`, `Executing tool: ${name}`, { args });
       
       if (toolMap[name]) {
         try {
           const result = await toolMap[name].invoke(args);
+          console.log(`✅ Tool ${name} completed successfully. Result:`, result?.substring(0, 100) + '...');
           // timer.checkpoint(`tool_${name}_complete`, `Tool ${name} completed successfully`, { resultLength: result?.length || 0 });
           toolMessages.push({
             type: "tool",
@@ -391,6 +567,7 @@ async function executeTools(state, config = {}) {
             name: name
           });
         } catch (error) {
+          console.log(`❌ Tool ${name} execution failed:`, error.message);
           // timer.checkpoint(`tool_${name}_error`, `Tool ${name} execution failed`, { error: error.message });
           toolMessages.push({
             type: "tool",
@@ -425,6 +602,53 @@ async function executeTools(state, config = {}) {
       }]
     };
   }
+}
+
+/**
+ * Track conversation state for natural end call detection
+ */
+function trackConversationState(response, state) {
+  const currentState = state.conversationState || {};
+  const responseContent = response.content || '';
+  const hasToolCalls = response.tool_calls && response.tool_calls.length > 0;
+  
+  // Check if we just completed a task (shift or cancel appointment)
+  const completedTask = hasToolCalls && response.tool_calls.some(call => 
+    call.name === 'shift_appointment' || call.name === 'cancel_appointment'
+  );
+  
+  // Check if we're offering assistance
+  const offeringAssistance = responseContent.toLowerCase().includes('anything else') ||
+                            responseContent.toLowerCase().includes('help you with') ||
+                            responseContent.toLowerCase().includes('assistance') ||
+                            responseContent.toLowerCase().includes('anything more');
+  
+  // ENHANCED: Also check if this is a response to a previous assistance offer
+  const isResponseToAssistance = currentState.assistanceOffered && !offeringAssistance;
+  
+  // Update conversation state
+  const newState = {
+    ...currentState,
+    taskCompleted: completedTask || currentState.taskCompleted,
+    assistanceOffered: offeringAssistance || currentState.assistanceOffered, // Keep true if previously offered
+    endCallEligible: (completedTask || currentState.taskCompleted) && (offeringAssistance || currentState.assistanceOffered),
+    lastTaskType: completedTask ? (response.tool_calls.find(call => 
+      call.name === 'shift_appointment' || call.name === 'cancel_appointment'
+    )?.name) : currentState.lastTaskType,
+    assistanceOfferMessage: offeringAssistance ? responseContent : currentState.assistanceOfferMessage,
+    isResponseToAssistance: isResponseToAssistance
+  };
+  
+  console.log('🔄 Conversation state updated:', {
+    taskCompleted: newState.taskCompleted,
+    assistanceOffered: newState.assistanceOffered,
+    endCallEligible: newState.endCallEligible,
+    lastTaskType: newState.lastTaskType,
+    isResponseToAssistance: newState.isResponseToAssistance,
+    responseContent: responseContent.substring(0, 100)
+  });
+  
+  return newState;
 }
 
 module.exports = { generateResponse, executeTools, toolsCondition };
