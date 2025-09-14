@@ -15,7 +15,10 @@ const optionalEnvVars = {
   TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
   TWILIO_API_KEY_SID: process.env.TWILIO_API_KEY_SID,
   TWILIO_API_KEY_SECRET: process.env.TWILIO_API_KEY_SECRET,
+  TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
+  TWILIO_PHONE_NUMBER: process.env.TWILIO_PHONE_NUMBER || '+4981424634017',
   TWIML_APP_SID: process.env.TWIML_APP_SID,
+  BASE_URL: process.env.BASE_URL || "http://localhost:8080",
 };
 
 // Check for missing required environment variables

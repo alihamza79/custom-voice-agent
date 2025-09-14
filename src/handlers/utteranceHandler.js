@@ -42,11 +42,26 @@ async function processUtterance(utterance, mediaStream) {
         
         try {
           globalTimingLogger.startOperation('LangChain Continuation');
-          const workflowResult = await session.langChainSession.handler.continueWorkflow(
-            session.langChainSession.sessionId,
-            utterance,
-            mediaStream.streamSid
-          );
+          
+          let workflowResult;
+          if (session.langChainSession.workflowType === 'delay_notification') {
+            // Handle teammate delay workflow
+            const { continueDelayWorkflow } = require('../workflows/TeamDelayWorkflow');
+            const workflowData = session.langChainSession.workflowData || {};
+            workflowResult = await continueDelayWorkflow(
+              mediaStream.streamSid,
+              utterance,
+              workflowData
+            );
+          } else {
+            // Handle customer workflow
+            workflowResult = await session.langChainSession.handler.continueWorkflow(
+              session.langChainSession.sessionId,
+              utterance,
+              mediaStream.streamSid
+            );
+          }
+          
           globalTimingLogger.endOperation('LangChain Continuation');
           
           globalTimingLogger.logModelOutput(workflowResult.response, 'LANGCHAIN RESPONSE');
@@ -135,6 +150,15 @@ async function processUtterance(utterance, mediaStream) {
       
       // Start TTS immediately when graph resolves
       const ttsPromise = graphPromise.then(async (result) => {
+        console.log('🔍 DEBUG: Graph result received:', {
+          hasResult: !!result,
+          systemPrompt: result?.systemPrompt,
+          call_ended: result?.call_ended,
+          conversation_state: result?.conversation_state,
+          shouldEndCall: result?.workflowData?.shouldEndCall,
+          ttsStarted: ttsStarted
+        });
+        
         if (result && result.systemPrompt && !ttsStarted) {
           ttsStarted = true;
           actualGraphResult = result;
@@ -184,8 +208,28 @@ async function processUtterance(utterance, mediaStream) {
       
       // 🚀 Don't wait for immediate promise - it has a 5s timeout that blocks STT
       // Just wait for TTS to complete, let immediate promise resolve in background
+      console.log('🔍 DEBUG: About to wait for TTS promise');
       await ttsPromise;
+      console.log('🔍 DEBUG: TTS promise completed');
         
+      // Check if call should end
+      console.log('🔍 DEBUG: Checking call termination:', {
+        hasResult: !!actualGraphResult,
+        call_ended: actualGraphResult?.call_ended,
+        conversation_state: actualGraphResult?.conversation_state,
+        shouldEndCall: actualGraphResult?.workflowData?.shouldEndCall
+      });
+      
+      // Note: Call termination is now handled by Twilio's robust hangup method
+      // in the workflow functions (terminateCallRobustly), not here via WebSocket close
+      if (actualGraphResult && actualGraphResult.call_ended) {
+        console.log('📞 Call ending requested - handled by Twilio hangup method');
+      }
+      
+      if (actualGraphResult && actualGraphResult.workflowData && actualGraphResult.workflowData.shouldEndCall) {
+        console.log('📞 Workflow shouldEndCall detected - handled by Twilio hangup method');
+      }
+      
       // Broadcast intent classification result if available
       if (actualGraphResult) {
         sseService.broadcast('intent_classified', { 
@@ -249,6 +293,43 @@ async function processUtterance(utterance, mediaStream) {
           currentLanguage
         );
       }
+    }
+    
+    // Check if call should end after first utterance
+    console.log('🔍 DEBUG: Checking first utterance call termination:', {
+      hasResult: !!firstUtteranceResult,
+      call_ended: firstUtteranceResult?.call_ended,
+      conversation_state: firstUtteranceResult?.conversation_state,
+      shouldEndCall: firstUtteranceResult?.workflowData?.shouldEndCall
+    });
+    
+    if (firstUtteranceResult && firstUtteranceResult.call_ended) {
+      console.log('📞 Call ending requested after first utterance - closing WebSocket connection');
+      
+      // Close the WebSocket connection to end the call
+      setTimeout(() => {
+        try {
+          mediaStream.close();
+          console.log('📞 WebSocket connection closed - call ended');
+        } catch (error) {
+          console.error('❌ Error closing WebSocket connection:', error);
+        }
+      }, 3000); // Wait 3 seconds for TTS to complete
+    }
+    
+    // Additional check for shouldEndCall in workflowData
+    if (firstUtteranceResult && firstUtteranceResult.workflowData && firstUtteranceResult.workflowData.shouldEndCall) {
+      console.log('📞 First utterance workflow shouldEndCall detected - closing WebSocket connection');
+      
+      // Close the WebSocket connection to end the call
+      setTimeout(() => {
+        try {
+          mediaStream.close();
+          console.log('📞 WebSocket connection closed - call ended');
+        } catch (error) {
+          console.error('❌ Error closing WebSocket connection:', error);
+        }
+      }, 3000); // Wait 3 seconds for TTS to complete
     }
     
     mediaStream.hasGreeted = true;

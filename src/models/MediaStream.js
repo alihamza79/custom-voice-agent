@@ -45,6 +45,9 @@ class MediaStream {
     this.greetingSent = false;
     this.awaitingFirstInput = true; // Track if we're waiting for first user input
     
+    // Call termination tracking
+    this.callTerminated = false; // Flag to prevent processing after termination
+    
     // Current media stream reference
     this.currentMediaStream = null;
     
@@ -205,6 +208,12 @@ class MediaStream {
 
   // Function to process incoming messages
   processMessage(message) {
+    // CRITICAL FIX: Ignore all messages if call is terminated
+    if (this.callTerminated) {
+      console.log('🔚 Ignoring message - call is terminated:', message.type);
+      return;
+    }
+    
     if (message.type === "utf8") {
       let data = JSON.parse(message.utf8Data);
       
@@ -220,6 +229,18 @@ class MediaStream {
           this.streamSid = data.start.streamSid;
           this.callSid = data.start.callSid;
           this.accountSid = data.start.accountSid;
+          
+          // CRITICAL FIX: Check if this is a duplicate call from same number
+          if (this.callerNumber) {
+            const sessionManager = require('../services/sessionManager');
+            const recentSessions = sessionManager.getRecentSessionsByNumber(this.callerNumber, 10000); // 10 seconds
+            
+            if (recentSessions.length > 0) {
+              console.log('🔚 Duplicate call detected from same number - ignoring:', this.callerNumber);
+              this.callTerminated = true;
+              return;
+            }
+          }
           
           // Extract caller number from customParameters
           if (data.start.customParameters) {
@@ -377,6 +398,12 @@ class MediaStream {
     return this.connection && this.streamSid && !this.connection.closed;
   }
 
+  // Mark call as terminated to prevent new processing
+  markCallTerminated() {
+    console.log('🔚 Marking call as terminated to prevent new media processing');
+    this.callTerminated = true;
+  }
+
   // Get connection status
   getStatus() {
     return {
@@ -388,6 +415,7 @@ class MediaStream {
       hasGreeted: this.hasGreeted,
       greetingSent: this.greetingSent,
       awaitingFirstInput: this.awaitingFirstInput,
+      callTerminated: this.callTerminated,
       isActive: this.isActive()
     };
   }

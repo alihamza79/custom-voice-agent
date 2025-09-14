@@ -3,6 +3,7 @@ const { StateGraph, END, MemorySaver } = require("@langchain/langgraph");
 const { CallerState } = require('./state/CallerState');
 const { greetingNode } = require('./nodes/greetingNode');
 const { customerIntentNode } = require('./nodes/customerIntentNode');
+const { teammateIntentNode } = require('./nodes/teammateIntentNode');
 const { globalTimingLogger } = require('../utils/timingLogger');
 
 let compiledGraph = null;
@@ -11,19 +12,25 @@ let compiledGraph = null;
 async function buildCallerGraph() {
   if (compiledGraph) return compiledGraph;
 
-  // Build the graph with greeting and customer intent nodes
+  // Build the graph with greeting and intent nodes
   const graph = new StateGraph(CallerState)
     .addNode("greetingNode", greetingNode)
     .addNode("customerIntentNode", customerIntentNode)
+    .addNode("teammateIntentNode", teammateIntentNode)
     .addConditionalEdges("greetingNode", (state) => {
       // If call should end, end it
       if (state.call_ended) {
         return END;
       }
       
-      // CRITICAL FIX: If we have transcript and greeting sent, go to intent classification
+      // CRITICAL FIX: If we have transcript and greeting sent, route based on caller type
       if (state.greeting_sent && state.transcript && state.transcript.trim() !== '') {
-        return "customerIntentNode";
+        // Route based on caller type
+        if (state.callerInfo && state.callerInfo.type === 'teammate') {
+          return "teammateIntentNode";
+        } else {
+          return "customerIntentNode";
+        }
       }
       
       // If greeting sent but no transcript, end call
@@ -36,6 +43,11 @@ async function buildCallerGraph() {
     })
     .addConditionalEdges("customerIntentNode", (state) => {
       // After intent classification, end the call for now
+      // In future, this will route to specific handler nodes based on intent
+      return END;
+    })
+    .addConditionalEdges("teammateIntentNode", (state) => {
+      // After teammate intent classification, end the call for now
       // In future, this will route to specific handler nodes based on intent
       return END;
     })

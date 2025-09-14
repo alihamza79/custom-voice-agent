@@ -10,6 +10,12 @@ function sendAutomaticGreeting(mediaStream) {
     return; // Already greeted or no streamSid
   }
   
+  // CRITICAL FIX: Don't send greeting if call is terminated
+  if (mediaStream.callTerminated) {
+    console.log('🔚 Skipping greeting - call is terminated');
+    return;
+  }
+  
   // Check if both STT and TTS are ready - with detailed logging
   const sttReady = mediaStream.deepgram && true; // If deepgram exists, assume it's ready (this function is called on Open event)
   const ttsReady = azureTTSService.isServiceReady();

@@ -37,6 +37,9 @@ const WebSocketServer = require("websocket").server;
 const dispatcher = new HttpDispatcher();
 const wsserver = http.createServer(handleRequest);
 
+// Routes
+const outboundCallRoutes = require('./routes/outboundCallRoutes');
+
 const mediaws = new WebSocketServer({
   httpServer: wsserver,
   autoAcceptConnections: true,
@@ -56,11 +59,81 @@ function handleRequest(request, response) {
     // Handle /twiml endpoint specially to capture POST body
     if (request.method === 'POST' && request.url === '/twiml') {
       handleTwiMLRequest(request, response);
+    } else if (request.url.startsWith('/outbound-')) {
+      // Handle outbound call routes
+      handleOutboundCallRequest(request, response);
     } else {
       dispatcher.dispatch(request, response);
     }
   } catch (err) {
     console.error(err);
+  }
+}
+
+// Handle outbound call requests
+function handleOutboundCallRequest(req, res) {
+  // Create a mock request object for the router
+  const mockReq = {
+    method: req.method,
+    url: req.url,
+    body: {},
+    post: {},
+    query: {}
+  };
+  
+  // Parse query parameters
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  url.searchParams.forEach((value, key) => {
+    mockReq.query[key] = value;
+  });
+  
+  // Handle POST body
+  if (req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+    
+    req.on('end', () => {
+      try {
+        const params = new URLSearchParams(body);
+        params.forEach((value, key) => {
+          mockReq.body[key] = value;
+          mockReq.post[key] = value;
+        });
+      } catch (error) {
+        console.error('Error parsing POST body:', error);
+      }
+      
+      // Route to appropriate handler
+      routeOutboundCall(mockReq, res);
+    });
+  } else {
+    routeOutboundCall(mockReq, res);
+  }
+}
+
+// Route outbound call requests
+function routeOutboundCall(req, res) {
+  const { method, url } = req;
+  
+  if (method === 'POST' && url === '/twiml-outbound-customer-confirmation') {
+    outboundCallRoutes.handleTwiMLGeneration(req, res);
+  } else if (method === 'POST' && url === '/outbound-call-status') {
+    outboundCallRoutes.handleCallStatus(req, res);
+  } else if (method === 'POST' && url === '/outbound-call-response') {
+    outboundCallRoutes.handleCustomerResponse(req, res);
+  } else if (method === 'POST' && url === '/outbound-call-transcription') {
+    outboundCallRoutes.handleTranscription(req, res);
+  } else if (method === 'GET' && url === '/active-calls') {
+    outboundCallRoutes.getActiveCalls(req, res);
+  } else if (method === 'GET' && url === '/health') {
+    outboundCallRoutes.healthCheck(req, res);
+  } else if (method === 'POST' && url === '/hangup') {
+    outboundCallRoutes.handleCallHangup(req, res);
+  } else {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not Found');
   }
 }
 

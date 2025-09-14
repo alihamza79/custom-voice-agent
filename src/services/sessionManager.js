@@ -44,6 +44,7 @@ class SessionManager {
     const session = {
       id: `session_${streamSid}`,
       streamSid,
+      createdAt: Date.now(), // Add creation timestamp
       
       // Caller context (replaces global.currentCallerInfo)
       callerInfo: null,
@@ -111,6 +112,41 @@ class SessionManager {
     const session = this.getSession(streamSid);
     session.callerInfo = callerInfo;
     console.log(`👤 Set caller info for session ${streamSid}: ${callerInfo?.name}`);
+  }
+  
+  // Set appointment data for outbound call scheduling
+  setAppointmentData(streamSid, appointmentData) {
+    const session = this.getSession(streamSid);
+    session.appointmentData = appointmentData;
+    console.log(`📅 Set appointment data for session ${streamSid}: ${appointmentData?.selectedAppointment?.summary}`);
+  }
+  
+  // Get appointment data for outbound call scheduling
+  getAppointmentData(streamSid) {
+    const session = this.getSession(streamSid);
+    return session.appointmentData || null;
+  }
+  
+  // Get recent sessions by phone number to detect duplicate calls
+  getRecentSessionsByNumber(phoneNumber, timeWindowMs = 10000) {
+    const now = Date.now();
+    const recentSessions = [];
+    
+    for (const [streamSid, session] of this.sessions) {
+      if (session.callerInfo && session.callerInfo.phoneNumber === phoneNumber) {
+        const sessionAge = now - (session.createdAt || now);
+        if (sessionAge <= timeWindowMs) {
+          recentSessions.push({
+            streamSid,
+            callerInfo: session.callerInfo,
+            createdAt: session.createdAt,
+            age: sessionAge
+          });
+        }
+      }
+    }
+    
+    return recentSessions;
   }
   
   // Set LangChain session for session
