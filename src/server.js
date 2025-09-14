@@ -136,6 +136,14 @@ function routeOutboundCall(req, res) {
     outboundWebSocketRoutes.handleWebSocketTwiMLGeneration(req, res);
   } else if (method === 'POST' && url === '/twiml') {
     // Handle both regular TwiML and outbound WebSocket TwiML
+    console.log('📞 [TWiML_ROUTE] ==========================================');
+    console.log('📞 [TWiML_ROUTE] TwiML route called!');
+    console.log('📞 [TWiML_ROUTE] Method:', method);
+    console.log('📞 [TWiML_ROUTE] URL:', url);
+    console.log('📞 [TWiML_ROUTE] Query:', req.query);
+    console.log('📞 [TWiML_ROUTE] Body:', req.body);
+    console.log('📞 [TWiML_ROUTE] Headers:', req.headers);
+    
     if (req.query?.streamSid && req.query.streamSid.startsWith('outbound_')) {
       console.log('📞 [TWiML_ROUTE] Handling outbound WebSocket TwiML request');
       outboundWebSocketRoutes.handleWebSocketTwiMLGeneration(req, res);

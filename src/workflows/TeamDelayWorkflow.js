@@ -746,7 +746,19 @@ async function handleMoreHelpRequest(transcript, sessionData, streamSid) {
       
       if (appointmentData) {
         const { selectedAppointment, newDateTime } = appointmentData;
+        // Test with a different number first to verify the system works
         const customerPhone = '+923450448426'; // Use Pakistani customer number
+        console.log(`📞 [OUTBOUND_TEST] Testing with phone number: ${customerPhone}`);
+        console.log(`📞 [OUTBOUND_TEST] Phone number format: ${customerPhone.startsWith('+') ? 'Valid' : 'Invalid'}`);
+        console.log(`📞 [OUTBOUND_TEST] Country code: ${customerPhone.substring(0, 4)}`);
+        
+        // Alternative test numbers if the current one doesn't work
+        const alternativeNumbers = [
+          '+923450448426', // Original Pakistani number
+          '+4981424634018', // German number (teammate's number for testing)
+          '+1234567890'     // US test number
+        ];
+        console.log(`📞 [OUTBOUND_TEST] Alternative numbers available:`, alternativeNumbers);
         const customerMessage = `Hello! This is regarding your appointment "${selectedAppointment.summary}". We need to reschedule it to ${formatDateTime(newDateTime.toISOString())}. Is this new time okay with you?`;
         
         // Schedule outbound call 20 seconds after teammate call ends
