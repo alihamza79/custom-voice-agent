@@ -41,6 +41,21 @@ class OutboundWebSocketService {
     try {
       console.log(`📞 [OUTBOUND_CALL_START] ==========================================`);
       console.log(`📞 [OUTBOUND_CALL_START] Starting outbound call process`);
+      
+      // Validate and initialize all required parameters
+      if (!customerPhone) {
+        throw new Error('Customer phone number is required');
+      }
+      if (!appointmentDetails || !appointmentDetails.summary) {
+        throw new Error('Appointment details with summary are required');
+      }
+      if (!newTime) {
+        throw new Error('New time is required');
+      }
+      if (!teammateCallSid) {
+        throw new Error('Teammate call SID is required');
+      }
+      
       console.log(`📞 [OUTBOUND_CALL_START] Customer Phone: ${customerPhone}`);
       console.log(`📞 [OUTBOUND_CALL_START] Appointment: ${appointmentDetails.summary}`);
       console.log(`📞 [OUTBOUND_CALL_START] New Time: ${newTime}`);
@@ -54,17 +69,30 @@ class OutboundWebSocketService {
         await this.initialize();
         console.log(`📞 [OUTBOUND_CALL_START] Twilio client initialized: ${this.initialized}`);
       }
+      
+      // Validate Twilio client
+      if (!this.client) {
+        throw new Error('Twilio client not initialized');
+      }
 
       // Create unique stream SID for outbound call
       const outboundStreamSid = `outbound_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       console.log(`📞 [OUTBOUND_CALL_START] Generated outbound stream SID: ${outboundStreamSid}`);
       
-      // Create session for outbound call
+      // Create session for outbound call with error handling
       console.log(`📞 [OUTBOUND_CALL_START] Creating session for outbound call: ${outboundStreamSid}`);
-      sessionManager.createSession(outboundStreamSid);
-      console.log(`📞 [OUTBOUND_CALL_START] Session created successfully`);
+      try {
+        if (!sessionManager) {
+          throw new Error('SessionManager not available');
+        }
+        sessionManager.createSession(outboundStreamSid);
+        console.log(`📞 [OUTBOUND_CALL_START] Session created successfully`);
+      } catch (sessionError) {
+        console.log(`📞 [OUTBOUND_CALL_START] ❌ Error creating session:`, sessionError.message);
+        throw new Error(`Failed to create session: ${sessionError.message}`);
+      }
       
-      // Set caller info for outbound call
+      // Set caller info for outbound call with validation
       const callerInfo = {
         name: 'Customer',
         phoneNumber: customerPhone,
@@ -76,8 +104,13 @@ class OutboundWebSocketService {
       };
       
       console.log(`📞 [OUTBOUND_CALL_START] Setting caller info:`, callerInfo);
-      sessionManager.setCallerInfo(outboundStreamSid, callerInfo);
-      console.log(`📞 [OUTBOUND_CALL_START] Caller info set successfully`);
+      try {
+        sessionManager.setCallerInfo(outboundStreamSid, callerInfo);
+        console.log(`📞 [OUTBOUND_CALL_START] Caller info set successfully`);
+      } catch (callerInfoError) {
+        console.log(`📞 [OUTBOUND_CALL_START] ❌ Error setting caller info:`, callerInfoError.message);
+        throw new Error(`Failed to set caller info: ${callerInfoError.message}`);
+      }
       
       // Set up LangChain session for outbound call
       console.log(`📞 [OUTBOUND_CALL_START] Setting up LangChain session for outbound call`);
@@ -127,7 +160,19 @@ class OutboundWebSocketService {
 
       // Create TwiML for WebSocket-based call - use same URLs as main server
       console.log(`📞 [OUTBOUND_CALL_START] Getting environment configuration`);
-      const { BASE_URL } = require('../config/environment');
+      let BASE_URL;
+      try {
+        const envConfig = require('../config/environment');
+        BASE_URL = envConfig.BASE_URL;
+        if (!BASE_URL) {
+          throw new Error('BASE_URL not configured in environment');
+        }
+        console.log(`📞 [OUTBOUND_CALL_START] BASE_URL: ${BASE_URL}`);
+      } catch (envError) {
+        console.log(`📞 [OUTBOUND_CALL_START] ❌ Error loading environment config:`, envError.message);
+        throw new Error(`Failed to load environment configuration: ${envError.message}`);
+      }
+      
       const twimlUrl = `${BASE_URL}/twiml?streamSid=${outboundStreamSid}`;
       console.log(`📞 [OUTBOUND_CALL_START] TwiML URL: ${twimlUrl}`);
       console.log(`📞 [OUTBOUND_CALL_START] Testing TwiML URL accessibility...`);
@@ -181,15 +226,26 @@ class OutboundWebSocketService {
       console.log(`📞 [OUTBOUND_CALL_START] Phone number format is valid`);
       
       console.log(`📞 [OUTBOUND_CALL_START] Creating Twilio call...`);
-      const call = await this.client.calls.create({
-        url: twimlUrl,
-        to: customerPhone,
-        from: process.env.TWILIO_PHONE_NUMBER || '+4981424634017',
-        method: 'POST',
-        statusCallback: `${BASE_URL}/outbound-websocket-call-status`,
-        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
-        statusCallbackMethod: 'POST'
-      });
+      let call;
+      try {
+        const fromNumber = process.env.TWILIO_PHONE_NUMBER || '+4981424634017';
+        if (!fromNumber) {
+          throw new Error('TWILIO_PHONE_NUMBER not configured');
+        }
+        
+        call = await this.client.calls.create({
+          url: twimlUrl,
+          to: customerPhone,
+          from: fromNumber,
+          method: 'POST',
+          statusCallback: `${BASE_URL}/outbound-websocket-call-status`,
+          statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+          statusCallbackMethod: 'POST'
+        });
+      } catch (twilioError) {
+        console.log(`📞 [OUTBOUND_CALL_START] ❌ Error creating Twilio call:`, twilioError.message);
+        throw new Error(`Failed to create Twilio call: ${twilioError.message}`);
+      }
       
       console.log(`📞 [OUTBOUND_CALL_START] Twilio call created successfully:`, {
         callSid: call.sid,
@@ -201,21 +257,33 @@ class OutboundWebSocketService {
         priceUnit: call.priceUnit
       });
 
-      // Store outbound call session data
-      this.activeOutboundCalls.set(call.sid, {
-        outboundStreamSid: outboundStreamSid,
-        customerPhone,
-        appointmentDetails,
-        newTime,
-        teammateCallSid,
-        status: 'initiated',
-        createdAt: new Date(),
-        callSid: call.sid
-      });
+      // Store outbound call session data with error handling
+      try {
+        this.activeOutboundCalls.set(call.sid, {
+          outboundStreamSid: outboundStreamSid,
+          customerPhone,
+          appointmentDetails,
+          newTime,
+          teammateCallSid,
+          status: 'initiated',
+          createdAt: new Date(),
+          callSid: call.sid
+        });
+        console.log(`📞 [OUTBOUND_CALL_START] Call data stored in active calls map`);
+      } catch (storageError) {
+        console.log(`📞 [OUTBOUND_CALL_START] ❌ Error storing call data:`, storageError.message);
+        // Don't throw here, just log the error
+      }
 
       // Update caller info with actual call SID
-      callerInfo.callSid = call.sid;
-      sessionManager.setCallerInfo(outboundStreamSid, callerInfo);
+      try {
+        callerInfo.callSid = call.sid;
+        sessionManager.setCallerInfo(outboundStreamSid, callerInfo);
+        console.log(`📞 [OUTBOUND_CALL_START] Caller info updated with call SID: ${call.sid}`);
+      } catch (updateError) {
+        console.log(`📞 [OUTBOUND_CALL_START] ❌ Error updating caller info:`, updateError.message);
+        // Don't throw here, just log the error
+      }
 
       console.log('✅ WebSocket outbound call initiated:', { 
         to: customerPhone, 

@@ -9,6 +9,25 @@ const outboundWebSocketService = require('../../services/outboundWebSocketServic
 
 const openai = new OpenAI();
 
+// Format date and time for display
+function formatDateTime(dateTimeString) {
+  try {
+    const date = new Date(dateTimeString);
+    return date.toLocaleString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+  } catch (error) {
+    console.error('Error formatting date:', error);
+    return dateTimeString;
+  }
+}
+
 // Generate customer verification responses based on intent
 function generateCustomerVerificationResponse(intent, transcript, language) {
   const responses = {
@@ -91,15 +110,15 @@ const outboundCustomerVerifyIntentNode = RunnableLambda.from(async (state) => {
     };
     
     try {
-      globalTimingLogger.startOperation('Continue Workflow');
-      const { continueDelayWorkflow } = require('../../workflows/TeamDelayWorkflow');
+      globalTimingLogger.startOperation('Continue Customer Verification Workflow');
+      const { continueCustomerVerificationWorkflow } = require('../../workflows/CustomerVerificationWorkflow');
       const workflowData = session.langChainSession.workflowData || {};
-      const workflowResult = await continueDelayWorkflow(
+      const workflowResult = await continueCustomerVerificationWorkflow(
         state.streamSid,
         state.transcript,
         workflowData
       );
-      globalTimingLogger.endOperation('Continue Workflow');
+      globalTimingLogger.endOperation('Continue Customer Verification Workflow');
       
       // Handle workflow result
       if (workflowResult && workflowResult.response) {
@@ -125,36 +144,71 @@ const outboundCustomerVerifyIntentNode = RunnableLambda.from(async (state) => {
         };
       }
     } catch (error) {
-      globalTimingLogger.logError(error, 'Continue Workflow');
-      console.error('Error continuing workflow:', error);
+      globalTimingLogger.logError(error, 'Continue Customer Verification Workflow');
+      console.error('Error continuing customer verification workflow:', error);
     }
   }
   
-  // Only process if we have a transcript from the customer
+  // Handle initial greeting for outbound customer verification
   if (!state.transcript || state.transcript.trim() === '') {
-    globalTimingLogger.logMoment('No transcript provided for customer verification');
+    globalTimingLogger.logMoment('Initial greeting for outbound customer verification');
+    
+    // Get appointment details from workflow data
+    const workflowData = session?.langChainSession?.workflowData || {};
+    const { appointmentDetails, newTime, customerPhone } = workflowData;
+    
+    if (!appointmentDetails || !newTime) {
+      console.error('Missing appointment details for customer verification');
+      return {
+        ...state,
+        intent: 'error',
+        systemPrompt: "I apologize, but there was an issue with your appointment details. Please contact us directly.",
+        call_ended: true,
+        conversation_history: [...(state.conversation_history || [])],
+        last_system_response: "I apologize, but there was an issue with your appointment details. Please contact us directly.",
+        turn_count: (state.turn_count || 0) + 1
+      };
+    }
+    
+    // Generate initial greeting with appointment details
+    const greeting = `Hello! This is regarding your appointment "${appointmentDetails.summary}". We need to reschedule it to ${formatDateTime(newTime)}. Is this new time okay with you?`;
     
     const conversation_history = [...(state.conversation_history || [])];
-    const errorResponse = "I'm sorry, I didn't catch that. Could you please let me know if the new appointment time works for you?";
+    conversation_history.push({
+      role: 'assistant',
+      content: greeting,
+      timestamp: new Date().toISOString(),
+      type: 'initial_greeting',
+      intent: 'appointment_verification'
+    });
     
-    // Check for duplicate response to prevent repetition
-    if (state.last_system_response !== errorResponse) {
-      conversation_history.push({
-        role: 'assistant',
-        content: errorResponse,
-        timestamp: new Date().toISOString(),
-        type: 'error'
+    // Initialize workflow data for customer verification
+    const initialWorkflowData = {
+      ...workflowData,
+      step: 'initial_contact',
+      language: state.language || 'english'
+    };
+    
+    // Update session with workflow data
+    if (session && session.langChainSession) {
+      sessionManager.updateSession(state.streamSid, {
+        langChainSession: {
+          ...session.langChainSession,
+          workflowData: initialWorkflowData
+        }
       });
     }
     
     return {
       ...state,
-      intent: 'unclear_response',
-      systemPrompt: errorResponse,
+      intent: 'appointment_verification',
+      systemPrompt: greeting,
+      workflowData: initialWorkflowData,
       call_ended: false,
       conversation_history: conversation_history,
-      last_system_response: errorResponse,
-      turn_count: (state.turn_count || 0) + 1
+      last_system_response: greeting,
+      turn_count: (state.turn_count || 0) + 1,
+      conversation_state: 'workflow'
     };
   }
   

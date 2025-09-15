@@ -6,6 +6,7 @@ const { customerIntentNode } = require('./nodes/customerIntentNode');
 const { teammateIntentNode } = require('./nodes/teammateIntentNode');
 const { outboundCustomerVerifyIntentNode } = require('./nodes/outboundCustomerVerifyIntentNode');
 const { globalTimingLogger } = require('../utils/timingLogger');
+const sessionManager = require('../services/sessionManager');
 
 let compiledGraph = null;
 
@@ -119,6 +120,20 @@ async function runCallerIdentificationGraph(input) {
       // No existing state found, proceeding with fresh session
     }
     
+    // Get caller info from session manager
+    let callerInfo = null;
+    if (input?.streamSid) {
+      try {
+        const session = sessionManager.getSession(input.streamSid);
+        if (session && session.callerInfo) {
+          callerInfo = session.callerInfo;
+          console.log('📞 [GRAPH] Retrieved caller info from session:', callerInfo);
+        }
+      } catch (error) {
+        console.log('📞 [GRAPH] Error retrieving caller info:', error.message);
+      }
+    }
+    
     // Prepare the input state
     const inputState = {
       transcript: input?.transcript || "",
@@ -127,6 +142,7 @@ async function runCallerIdentificationGraph(input) {
       callSid: input?.callSid,
       session_id: input?.streamSid || `session_${Date.now()}`,
       language: input?.language || 'english',
+      callerInfo: callerInfo,
       ...input
     };
     

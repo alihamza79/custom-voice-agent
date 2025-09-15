@@ -148,19 +148,36 @@ class MediaStream {
       this.threadId = this.streamSid || `thread_${Date.now()}`;
     }
     
+    // Use correct streamSid for outbound calls
+    const sessionStreamSid = this.isOutboundCall ? this.outboundStreamSid : this.threadId;
+    
+    console.log('📞 [SEND_GREETING] Calling graph system with:', {
+      isOutboundCall: this.isOutboundCall,
+      sessionStreamSid: sessionStreamSid,
+      callerNumber: this.callerNumber,
+      callSid: this.callSid
+    });
+    
     // Import router here to avoid circular dependencies
     const { runCallerIdentificationGraph } = require('../graph');
     
     // Run graph with empty transcript to trigger greeting
     runCallerIdentificationGraph({ 
       transcript: '', // Empty transcript triggers greeting generation
-      streamSid: this.threadId,
+      streamSid: sessionStreamSid,
       phoneNumber: this.callerNumber,
       callSid: this.callSid,
       language: 'english', // Will be updated when user speaks
       from: this.callerNumber
     })
       .then((result) => {
+        console.log('📞 [SEND_GREETING] Graph result:', {
+          hasResult: !!result,
+          hasSystemPrompt: !!(result && result.systemPrompt),
+          systemPrompt: result ? result.systemPrompt : 'No systemPrompt',
+          callerInfo: result ? result.callerInfo : 'No callerInfo'
+        });
+        
         if (result && result.systemPrompt) {
           globalTimingLogger.logModelOutput(result.systemPrompt, 'GREETING');
           
@@ -188,10 +205,12 @@ class MediaStream {
         }
       })
       .catch((error) => {
+        console.log('📞 [SEND_GREETING] Graph error:', error.message);
         globalTimingLogger.logError(error, 'Immediate Greeting');
         
         // Fallback greeting
         const fallbackGreeting = `Hi! How can I assist you today?`;
+        console.log('📞 [SEND_GREETING] Using fallback greeting:', fallbackGreeting);
         globalTimingLogger.logModelOutput(fallbackGreeting, 'FALLBACK GREETING');
         
         globalTimingLogger.startOperation('Fallback Greeting TTS');
@@ -257,6 +276,17 @@ class MediaStream {
             if (!this.accountSid && data.start.customParameters.accountSid) {
               this.accountSid = data.start.customParameters.accountSid;
             }
+            
+            // Check if this is an outbound call
+            if (data.start.customParameters.isOutbound === 'true') {
+              this.isOutboundCall = true;
+              this.outboundStreamSid = data.start.customParameters.streamSid;
+              console.log('📞 [MEDIASTREAM] Outbound call detected:', {
+                streamSid: this.outboundStreamSid,
+                callerNumber: this.callerNumber,
+                isOutbound: this.isOutboundCall
+              });
+            }
           }
           
           // Fallback: check other possible locations for caller info
@@ -274,19 +304,34 @@ class MediaStream {
             console.warn('⚠️ TTS prewarming failed on call start:', error.message);
           });
           
+          // Use outbound streamSid if this is an outbound call, otherwise use regular streamSid
+          const sessionStreamSid = this.isOutboundCall ? this.outboundStreamSid : this.streamSid;
+          
           // Initialize global language state for this call
-          languageStateService.initializeCall(this.streamSid, 'english');
+          languageStateService.initializeCall(sessionStreamSid, 'english');
           
           // Register this MediaStream with sessionManager
-          sessionManager.setMediaStream(this.streamSid, this);
+          sessionManager.setMediaStream(sessionStreamSid, this);
           
           // Set caller info in session
           if (this.callerNumber) {
-            sessionManager.setCallerInfo(this.streamSid, {
+            const callerInfo = {
               phoneNumber: this.callerNumber,
               callSid: this.callSid,
               accountSid: this.accountSid
-            });
+            };
+            
+            // Add outbound call flags if this is an outbound call
+            if (this.isOutboundCall) {
+              callerInfo.isOutbound = true;
+              callerInfo.outboundStreamSid = this.outboundStreamSid;
+              callerInfo.type = 'customer';
+              callerInfo.name = 'Customer';
+              console.log('📞 [MEDIASTREAM] Setting outbound caller info:', callerInfo);
+            }
+            
+            sessionManager.setCallerInfo(sessionStreamSid, callerInfo);
+            console.log('📞 [MEDIASTREAM] Using session streamSid:', sessionStreamSid);
           }
           
           // CRITICAL FIX: Send greeting immediately when call starts

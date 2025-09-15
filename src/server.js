@@ -134,25 +134,6 @@ function routeOutboundCall(req, res) {
     outboundCallRoutes.handleCallHangup(req, res);
   } else if (method === 'POST' && url === '/twiml-outbound-websocket-call') {
     outboundWebSocketRoutes.handleWebSocketTwiMLGeneration(req, res);
-  } else if (method === 'POST' && url === '/twiml') {
-    // Handle both regular TwiML and outbound WebSocket TwiML
-    console.log('📞 [TWiML_ROUTE] ==========================================');
-    console.log('📞 [TWiML_ROUTE] TwiML route called!');
-    console.log('📞 [TWiML_ROUTE] Method:', method);
-    console.log('📞 [TWiML_ROUTE] URL:', url);
-    console.log('📞 [TWiML_ROUTE] Query:', req.query);
-    console.log('📞 [TWiML_ROUTE] Body:', req.body);
-    console.log('📞 [TWiML_ROUTE] Headers:', req.headers);
-    
-    if (req.query?.streamSid && req.query.streamSid.startsWith('outbound_')) {
-      console.log('📞 [TWiML_ROUTE] Handling outbound WebSocket TwiML request');
-      outboundWebSocketRoutes.handleWebSocketTwiMLGeneration(req, res);
-    } else {
-      console.log('📞 [TWiML_ROUTE] Handling regular TwiML request');
-      // Handle regular TwiML (existing logic)
-      res.writeHead(200, { 'Content-Type': 'text/xml' });
-      res.end('<?xml version="1.0" encoding="UTF-8"?><Response><Say>Hello from TwiML</Say></Response>');
-    }
   } else if (method === 'POST' && url === '/outbound-websocket-call-status') {
     outboundWebSocketRoutes.handleOutboundCallStatus(req, res);
   } else if (method === 'POST' && url === '/outbound-websocket-call-hangup') {
@@ -171,6 +152,64 @@ function routeOutboundCall(req, res) {
       body: {}
     };
     outboundWebSocketRoutes.handleWebSocketTwiMLGeneration(testReq, res);
+  } else if (method === 'GET' && url === '/test-websocket') {
+    console.log('🧪 [TEST] Testing WebSocket server accessibility');
+    
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      message: 'WebSocket server is accessible',
+      websocketUrl: WEBSOCKET_URL,
+      baseUrl: BASE_URL,
+      timestamp: new Date().toISOString(),
+      status: 'online',
+      testInstructions: 'Check if WebSocket connection can be established',
+      testUrl: `${WEBSOCKET_URL}?streamSid=test_connection&isOutbound=true&callerNumber=+1234567890&callSid=test_call`
+    }));
+  } else if (method === 'GET' && url === '/test-websocket-connection') {
+    console.log('🧪 [TEST] Testing WebSocket connection directly');
+    
+    // Test WebSocket connection
+    const WebSocket = require('ws');
+    const testUrl = `${WEBSOCKET_URL}?streamSid=test_connection&isOutbound=true&callerNumber=+1234567890&callSid=test_call`;
+    
+    console.log('🧪 [TEST] Attempting WebSocket connection to:', testUrl);
+    
+    const ws = new WebSocket(testUrl);
+    
+    ws.on('open', function() {
+      console.log('✅ [TEST] WebSocket connection successful!');
+      ws.close();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        message: 'WebSocket connection test successful',
+        testUrl: testUrl,
+        status: 'connected'
+      }));
+    });
+    
+    ws.on('error', function(error) {
+      console.log('❌ [TEST] WebSocket connection failed:', error.message);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        message: 'WebSocket connection test failed',
+        testUrl: testUrl,
+        error: error.message,
+        status: 'failed'
+      }));
+    });
+    
+    // Timeout after 5 seconds
+    setTimeout(() => {
+      if (ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          message: 'WebSocket connection test timed out',
+          testUrl: testUrl,
+          status: 'timeout'
+        }));
+      }
+    }, 5000);
   } else {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not Found');
@@ -303,6 +342,29 @@ dispatcher.onGet("/voice-token", function (req, res) {
 dispatcher.onPost("/twiml", function (req, res) {
   const { WEBSOCKET_URL } = require('./config/environment');
   
+  // Manually parse query parameters from URL since req.query might not be available
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const streamSid = url.searchParams.get('streamSid');
+  const isOutbound = streamSid && streamSid.startsWith('outbound_');
+  
+  console.log('📞 [TWiML_ROUTE] ==========================================');
+  console.log('📞 [TWiML_ROUTE] TwiML route called!');
+  console.log('📞 [TWiML_ROUTE] Method:', req.method);
+  console.log('📞 [TWiML_ROUTE] URL:', req.url);
+  console.log('📞 [TWiML_ROUTE] Parsed StreamSID:', streamSid);
+  console.log('📞 [TWiML_ROUTE] Is Outbound:', isOutbound);
+  console.log('📞 [TWiML_ROUTE] Body:', req.body);
+  console.log('📞 [TWiML_ROUTE] Headers:', req.headers);
+  
+  if (isOutbound) {
+    console.log('📞 [TWiML_ROUTE] Handling outbound WebSocket TwiML request');
+    outboundWebSocketRoutes.handleWebSocketTwiMLGeneration(req, res);
+    return;
+  }
+  
+  // Handle regular inbound calls
+  console.log('📞 [TWiML_ROUTE] Handling regular TwiML request');
+  
   // Simple approach: try to get parameters, but always send immediate response
   let callerNumber = 'Unknown';
   let callSid = '';
@@ -339,47 +401,137 @@ dispatcher.onPost("/twiml", function (req, res) {
   Websocket Server
 */
 mediaws.on("connect", function (connection) {
-  console.log('📞 [WEBSOCKET_CONNECT] ==========================================');
-  console.log('📞 [WEBSOCKET_CONNECT] New WebSocket connection received');
-  console.log('📞 [WEBSOCKET_CONNECT] Connection resourceURL:', connection.resourceURL);
-  
-  // Extract URL parameters to identify outbound calls
-  const url = new URL(connection.resourceURL, 'http://localhost');
-  const streamSid = url.searchParams.get('streamSid');
-  const isOutbound = url.searchParams.get('isOutbound') === 'true';
-  
-  console.log('📞 [WEBSOCKET_CONNECT] Extracted parameters:', {
-    streamSid: streamSid,
-    isOutbound: isOutbound,
-    resourceURL: connection.resourceURL,
-    searchParams: Object.fromEntries(url.searchParams)
-  });
-  
-  const mediaStream = new MediaStream(connection);
-  console.log('📞 [WEBSOCKET_CONNECT] MediaStream created successfully');
-  
-  // Set outbound call flag if this is an outbound call
-  if (isOutbound && streamSid) {
-    mediaStream.isOutboundCall = true;
-    mediaStream.outboundStreamSid = streamSid;
-    console.log('📞 [WEBSOCKET_CONNECT] Outbound call WebSocket connection established:', streamSid);
-    console.log('📞 [WEBSOCKET_CONNECT] MediaStream flags set:', {
-      isOutboundCall: mediaStream.isOutboundCall,
-      outboundStreamSid: mediaStream.outboundStreamSid
+  try {
+    console.log('📞 [WEBSOCKET_CONNECT] ==========================================');
+    console.log('📞 [WEBSOCKET_CONNECT] 🎉 NEW WEBSOCKET CONNECTION ESTABLISHED!');
+    console.log('📞 [WEBSOCKET_CONNECT] Timestamp:', new Date().toISOString());
+    console.log('📞 [WEBSOCKET_CONNECT] Connection resourceURL:', connection.resourceURL);
+    console.log('📞 [WEBSOCKET_CONNECT] Connection headers:', connection.headers);
+    console.log('📞 [WEBSOCKET_CONNECT] Connection query:', connection.query);
+    
+    // Initialize variables with defaults
+    let streamSid = null;
+    let isOutbound = false;
+    let url = null;
+    
+    try {
+      // Extract parameters from URL query string (for both regular and outbound calls)
+      if (connection.resourceURL) {
+        url = new URL(connection.resourceURL, 'http://localhost');
+        streamSid = url.searchParams.get('streamSid');
+        isOutbound = url.searchParams.get('isOutbound') === 'true';
+        console.log('📞 [WEBSOCKET_CONNECT] Parsed from resourceURL:', {
+          streamSid: streamSid,
+          isOutbound: isOutbound,
+          resourceURL: connection.resourceURL
+        });
+      }
+      
+      // Also check for parameters passed via <Parameter> elements (fallback)
+      if (connection.query && connection.query.streamSid) {
+        streamSid = connection.query.streamSid;
+        console.log('📞 [WEBSOCKET_CONNECT] Found streamSid in connection.query:', streamSid);
+      }
+      if (connection.query && connection.query.isOutbound) {
+        isOutbound = connection.query.isOutbound === 'true';
+        console.log('📞 [WEBSOCKET_CONNECT] Found isOutbound in connection.query:', isOutbound);
+      }
+      
+      if (!streamSid) {
+        console.log('📞 [WEBSOCKET_CONNECT] ⚠️ No streamSid found in URL or query parameters');
+      }
+    } catch (urlError) {
+      console.log('📞 [WEBSOCKET_CONNECT] ❌ Error parsing URL:', urlError.message);
+      console.log('📞 [WEBSOCKET_CONNECT] Using fallback parameters');
+    }
+    
+    console.log('📞 [WEBSOCKET_CONNECT] Extracted parameters:', {
+      streamSid: streamSid,
+      isOutbound: isOutbound,
+      resourceURL: connection.resourceURL,
+      searchParams: url ? Object.fromEntries(url.searchParams) : {}
     });
-  } else {
-    console.log('📞 [WEBSOCKET_CONNECT] Regular inbound call WebSocket connection');
+    
+    // Initialize MediaStream with error handling
+    let mediaStream = null;
+    try {
+      mediaStream = new MediaStream(connection);
+      console.log('📞 [WEBSOCKET_CONNECT] MediaStream created successfully');
+    } catch (mediaStreamError) {
+      console.log('📞 [WEBSOCKET_CONNECT] ❌ Error creating MediaStream:', mediaStreamError.message);
+      throw mediaStreamError;
+    }
+    
+    // Initialize MediaStream properties with defaults
+    mediaStream.isOutboundCall = false;
+    mediaStream.outboundStreamSid = null;
+    
+    // Note: Outbound call detection will be handled by MediaStream.processMessage()
+    // when it receives the 'start' event with customParameters
+    console.log('📞 [WEBSOCKET_CONNECT] WebSocket connection established - outbound detection will happen in MediaStream');
+    
+    // LEGACY: Keep for backward compatibility
+    try {
+      currentMediaStream = mediaStream;
+      console.log('📞 [WEBSOCKET_CONNECT] ✅ MediaStream registered globally');
+    } catch (globalError) {
+      console.log('📞 [WEBSOCKET_CONNECT] ❌ Error setting global MediaStream:', globalError.message);
+    }
+    
+  } catch (error) {
+    console.log('📞 [WEBSOCKET_CONNECT] ❌ CRITICAL ERROR in WebSocket connection:', error.message);
+    console.log('📞 [WEBSOCKET_CONNECT] Error stack:', error.stack);
+    
+    // Try to create a minimal MediaStream for error recovery
+    try {
+      const fallbackMediaStream = new MediaStream(connection);
+      fallbackMediaStream.isOutboundCall = false;
+      fallbackMediaStream.outboundStreamSid = null;
+      currentMediaStream = fallbackMediaStream;
+      console.log('📞 [WEBSOCKET_CONNECT] ✅ Fallback MediaStream created');
+    } catch (fallbackError) {
+      console.log('📞 [WEBSOCKET_CONNECT] ❌ Failed to create fallback MediaStream:', fallbackError.message);
+    }
   }
-  
-  // LEGACY: Keep for backward compatibility
-  currentMediaStream = mediaStream;
-  
-  // NEW: Will register with sessionManager when streamSid is available
 });
 
 // Start the server
 wsserver.listen(HTTP_SERVER_PORT, async function () {
-  console.log("Server listening on: http://localhost:%s", HTTP_SERVER_PORT);
+  console.log("🚀 [SERVER_STARTUP] ==========================================");
+  console.log("🚀 [SERVER_STARTUP] 🎉 SERVER STARTED SUCCESSFULLY!");
+  console.log("🚀 [SERVER_STARTUP] Timestamp:", new Date().toISOString());
+  console.log("🚀 [SERVER_STARTUP] HTTP Server listening on: http://localhost:%s", HTTP_SERVER_PORT);
+  console.log("🚀 [SERVER_STARTUP] WebSocket server should be accessible at: wss://6b0ee0036060.ngrok-free.app/streams");
+  console.log("🚀 [SERVER_STARTUP] Base URL: https://6b0ee0036060.ngrok-free.app");
+  console.log("🚀 [SERVER_STARTUP] TwiML endpoint: https://6b0ee0036060.ngrok-free.app/twiml");
+  console.log("🚀 [SERVER_STARTUP] Status callback: https://6b0ee0036060.ngrok-free.app/outbound-websocket-call-status");
+  console.log("🚀 [SERVER_STARTUP] ==========================================");
+  
+  // Test WebSocket server accessibility
+  console.log("🧪 [WEBSOCKET_TEST] Testing WebSocket server accessibility...");
+  const WebSocket = require('ws');
+  const testUrl = 'wss://6b0ee0036060.ngrok-free.app/streams?streamSid=test_connection&isOutbound=true';
+  console.log("🧪 [WEBSOCKET_TEST] Test URL:", testUrl);
+  
+  const testWs = new WebSocket(testUrl);
+  
+  testWs.on('open', function() {
+    console.log("✅ [WEBSOCKET_TEST] WebSocket connection successful!");
+    testWs.close();
+  });
+  
+  testWs.on('error', function(error) {
+    console.log("❌ [WEBSOCKET_TEST] WebSocket connection failed:", error.message);
+    console.log("❌ [WEBSOCKET_TEST] This explains why Twilio cannot connect to the WebSocket server");
+  });
+  
+  // Timeout after 5 seconds
+  setTimeout(() => {
+    if (testWs.readyState === WebSocket.CONNECTING) {
+      testWs.close();
+      console.log("⏰ [WEBSOCKET_TEST] WebSocket connection test timed out");
+    }
+  }, 5000);
 
   // Initialize Azure TTS streaming at startup
   await azureTTSService.initialize();

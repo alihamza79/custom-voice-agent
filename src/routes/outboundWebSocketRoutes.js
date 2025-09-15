@@ -8,7 +8,9 @@ function handleWebSocketTwiMLGeneration(req, res) {
     globalTimingLogger.startOperation('Generate WebSocket Outbound TwiML');
     
     // Extract outbound stream SID from query parameters
-    const outboundStreamSid = req.query?.streamSid || 
+    // Manually parse query parameters from URL since req.query might not be available
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const outboundStreamSid = url.searchParams.get('streamSid') || 
                              req.body?.Digits?.replace('w', '') || 
                              `outbound_${Date.now()}`;
     
@@ -31,12 +33,17 @@ function handleWebSocketTwiMLGeneration(req, res) {
       fullStreamUrl: `${websocketUrl}?streamSid=${outboundStreamSid}&isOutbound=true`
     });
     
-    // Generate TwiML that connects to WebSocket
+    // Generate TwiML that connects to WebSocket (using Parameter elements like regular calls)
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Start>
-        <Stream url="${websocketUrl}?streamSid=${outboundStreamSid}&isOutbound=true" />
-    </Start>
+    <Connect>
+        <Stream url="${websocketUrl}">
+            <Parameter name="callerNumber" value="+923450448426" />
+            <Parameter name="callSid" value="${outboundStreamSid}" />
+            <Parameter name="streamSid" value="${outboundStreamSid}" />
+            <Parameter name="isOutbound" value="true" />
+        </Stream>
+    </Connect>
     <Say voice="alice" language="en-US">Hello! This is regarding your appointment. Please hold while I connect you to our system.</Say>
     <Pause length="2"/>
     <Say voice="alice" language="en-US">You are now connected. Please speak your response.</Say>
@@ -59,6 +66,14 @@ function handleWebSocketTwiMLGeneration(req, res) {
     // Fallback TwiML
     const fallbackTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+    <Connect>
+        <Stream url="${websocketUrl}">
+            <Parameter name="callerNumber" value="+923450448426" />
+            <Parameter name="callSid" value="${outboundStreamSid}" />
+            <Parameter name="streamSid" value="${outboundStreamSid}" />
+            <Parameter name="isOutbound" value="true" />
+        </Stream>
+    </Connect>
     <Say voice="alice" language="en-US">Hello! This is regarding your appointment. We need to reschedule it. Is this new time okay with you?</Say>
     <Hangup/>
 </Response>`;
