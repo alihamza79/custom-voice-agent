@@ -5,6 +5,7 @@ const { greetingNode } = require('./nodes/greetingNode');
 const { customerIntentNode } = require('./nodes/customerIntentNode');
 const { teammateIntentNode } = require('./nodes/teammateIntentNode');
 const { outboundCustomerVerifyIntentNode } = require('./nodes/outboundCustomerVerifyIntentNode');
+const { potentialClientNode } = require('./nodes/potentialClientNode');
 const { globalTimingLogger } = require('../utils/timingLogger');
 const sessionManager = require('../services/sessionManager');
 
@@ -20,6 +21,7 @@ async function buildCallerGraph() {
     .addNode("customerIntentNode", customerIntentNode)
     .addNode("teammateIntentNode", teammateIntentNode)
     .addNode("outboundCustomerVerifyIntentNode", outboundCustomerVerifyIntentNode)
+    .addNode("potentialClientNode", potentialClientNode)
     .addConditionalEdges("greetingNode", (state) => {
       // If call should end, end it
       if (state.call_ended) {
@@ -37,6 +39,9 @@ async function buildCallerGraph() {
         // Route based on caller type
         if (state.callerInfo && state.callerInfo.type === 'teammate') {
           return "teammateIntentNode";
+        } else if (state.callerInfo && state.callerInfo.type === 'unknown') {
+          console.log('📞 Routing unknown caller to potential client node');
+          return "potentialClientNode";
         } else {
           return "customerIntentNode";
         }
@@ -66,6 +71,10 @@ async function buildCallerGraph() {
     })
     .addConditionalEdges("outboundCustomerVerifyIntentNode", (state) => {
       // After customer verification, end the call
+      return END;
+    })
+    .addConditionalEdges("potentialClientNode", (state) => {
+      // After potential client processing, end the call
       return END;
     })
     .setEntryPoint("greetingNode");

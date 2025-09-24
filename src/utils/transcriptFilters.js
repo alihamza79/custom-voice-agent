@@ -1,21 +1,21 @@
 // Transcript filtering and validation utilities
 
-// ENHANCED: More conservative transcript filtering to reduce noise processing
+// OPTIMIZED: Balanced transcript filtering for better performance
 function shouldLogInterimTranscript(current, last) {
   if (!last) return true;
   
-  // More strict filtering - require bigger changes
-  if (Math.abs(current.length - last.length) <= 5) return false;
+  // Less strict filtering - allow smaller changes for better responsiveness
+  if (Math.abs(current.length - last.length) <= 2) return false;
   
-  // Don't log if transcript is too similar (within 5 characters and high similarity)
+  // Don't log if transcript is too similar (within 2 characters and high similarity)
   const similarity = calculateSimilarity(current, last);
-  if (similarity > 0.95) return false;
+  if (similarity > 0.98) return false;
   
   // Don't log if it's just adding filler words or noise
   if (isJustFillerWords(current, last)) return false;
   
-  // ENHANCED: Don't log very short transcripts unless they're significantly different
-  if (current.trim().length < 3 && similarity > 0.7) return false;
+  // OPTIMIZED: Allow shorter transcripts for better responsiveness
+  if (current.trim().length < 2 && similarity > 0.8) return false;
   
   return true;
 }

@@ -11,14 +11,14 @@ const requiredEnvVars = {
 
 const optionalEnvVars = {
   OPENAI_MODEL: process.env.OPENAI_MODEL,
-  WEBSOCKET_URL: process.env.WEBSOCKET_URL || "wss://6b0ee0036060.ngrok-free.app/streams",
+  WEBSOCKET_URL: process.env.WEBSOCKET_URL || "wss://9bc0d0823b04.ngrok-free.app/streams",
   TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
   TWILIO_API_KEY_SID: process.env.TWILIO_API_KEY_SID,
   TWILIO_API_KEY_SECRET: process.env.TWILIO_API_KEY_SECRET,
   TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
   TWILIO_PHONE_NUMBER: process.env.TWILIO_PHONE_NUMBER || '+4981424634017',
   TWIML_APP_SID: process.env.TWIML_APP_SID,
-  BASE_URL: process.env.BASE_URL || "https://6b0ee0036060.ngrok-free.app",
+  BASE_URL: process.env.BASE_URL || "https://9bc0d0823b04.ngrok-free.app",
 };
 
 // Check for missing required environment variables

@@ -13,8 +13,9 @@ class TTSPrewarmer {
     this.isPrewarmed = false;
     this.prewarmInterval = null;
     this.lastPrewarmTime = 0;
-    this.prewarmFrequency = 30000; // 30 seconds
+    this.prewarmFrequency = 60000; // 60 seconds - less frequent to reduce load
     this.prewarmText = "Hi"; // Very short text for prewarming
+    this.prewarmTimeout = 5000; // 5 seconds timeout instead of default
   }
 
   /**
@@ -111,7 +112,7 @@ class TTSPrewarmer {
 
       const timeoutId = setTimeout(() => {
         reject(new Error('Prewarm synthesis timeout'));
-      }, 5000); // 5 second timeout
+      }, this.prewarmTimeout); // Use class property for timeout
 
       this.prewarmSynthesizer.speakTextAsync(
         this.prewarmText,

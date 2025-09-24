@@ -75,7 +75,11 @@ const greetingNode = RunnableLambda.from(async (state) => {
       callerInfo = identifyCaller(phoneNumber);
       
       if (callerInfo) {
-        console.log(`✅ Caller identified: ${callerInfo.name} (${callerInfo.type}) from ${phoneNumber}`);
+        if (callerInfo.type === 'unknown') {
+          console.log(`❓ Unknown caller from ${phoneNumber} - treating as potential client`);
+        } else {
+          console.log(`✅ Caller identified: ${callerInfo.name} (${callerInfo.type}) from ${phoneNumber}`);
+        }
       } else {
         console.log(`❓ Unknown caller from ${phoneNumber}`);
       }
@@ -84,13 +88,16 @@ const greetingNode = RunnableLambda.from(async (state) => {
       phoneNumber = "Unknown";
     }
     
-    // Start calendar preloading immediately in background
-    if (callerInfo && state.streamSid) {
+    // Start calendar preloading immediately in background (skip for unknown callers)
+    if (callerInfo && state.streamSid && callerInfo.type !== 'unknown') {
       console.log('📅 Starting calendar preload for auto-greeting');
       sessionManager.setCallerInfo(state.streamSid, callerInfo);
       calendarPreloader.startPreloading(state.streamSid, callerInfo).catch(error => {
         console.warn('Calendar preload failed during auto-greeting:', error.message);
       });
+    } else if (callerInfo && callerInfo.type === 'unknown') {
+      console.log('📞 Potential client detected - skipping calendar preload');
+      sessionManager.setCallerInfo(state.streamSid, callerInfo);
     }
     
     // Generate personalized greeting
@@ -162,7 +169,11 @@ const greetingNode = RunnableLambda.from(async (state) => {
     callerInfo = identifyCaller(phoneNumber);
     
     if (callerInfo) {
-      console.log(`✅ Caller identified: ${callerInfo.name} (${callerInfo.type}) from ${phoneNumber}`);
+      if (callerInfo.type === 'unknown') {
+        console.log(`❓ Unknown caller from ${phoneNumber} - treating as potential client`);
+      } else {
+        console.log(`✅ Caller identified: ${callerInfo.name} (${callerInfo.type}) from ${phoneNumber}`);
+      }
     } else {
       console.log(`❓ Unknown caller from ${phoneNumber}`);
     }
@@ -171,13 +182,16 @@ const greetingNode = RunnableLambda.from(async (state) => {
     phoneNumber = "Unknown";
   }
   
-  // Start calendar preloading immediately in background
-  if (callerInfo && state.streamSid) {
+  // Start calendar preloading immediately in background (skip for unknown callers)
+  if (callerInfo && state.streamSid && callerInfo.type !== 'unknown') {
     console.log('📅 Starting calendar preload for normal greeting');
     sessionManager.setCallerInfo(state.streamSid, callerInfo);
     calendarPreloader.startPreloading(state.streamSid, callerInfo).catch(error => {
       console.warn('Calendar preload failed during normal greeting:', error.message);
     });
+  } else if (callerInfo && callerInfo.type === 'unknown') {
+    console.log('📞 Potential client detected - skipping calendar preload');
+    sessionManager.setCallerInfo(state.streamSid, callerInfo);
   }
   
   // Generate personalized greeting using OpenAI with language support

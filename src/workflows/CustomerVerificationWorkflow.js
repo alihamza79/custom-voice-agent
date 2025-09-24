@@ -3,6 +3,7 @@ const { globalTimingLogger } = require('../utils/timingLogger');
 const sessionManager = require('../services/sessionManager');
 const calendarService = require('../services/googleCalendarService');
 const databaseService = require('../services/databaseService');
+const customerVerificationDB = require('../services/customerVerificationDatabaseService');
 
 // Format date and time for display
 function formatDateTime(dateTimeString) {
@@ -87,36 +88,30 @@ async function parseCustomerResponse(transcript, language = 'english') {
 // Handle appointment confirmation
 async function handleAppointmentConfirmation(workflowData, streamSid) {
   try {
-    const { appointmentDetails, newTime, teammateCallSid } = workflowData;
+    const { appointmentDetails, newTime, teammateCallSid, customerPhone, language } = workflowData;
     
-    // Update calendar with confirmed appointment
-    const updateResult = await calendarService.updateAppointment(
-      appointmentDetails.id,
-      {
-        start: { dateTime: newTime },
-        end: { dateTime: new Date(new Date(newTime).getTime() + 60 * 60 * 1000) } // 1 hour duration
-      }
-    );
+    // Log confirmation to database instead of updating calendar
+    const dbResult = await customerVerificationDB.logAppointmentConfirmation({
+      appointmentId: appointmentDetails.id,
+      appointmentSummary: appointmentDetails.summary,
+      originalTime: appointmentDetails.start.dateTime,
+      newTime: newTime,
+      customerPhone: customerPhone,
+      teammateCallSid: teammateCallSid,
+      language: language || 'english',
+      callDuration: null // Will be set by the caller
+    });
     
-    if (updateResult.success) {
-      // Log successful confirmation
-      await databaseService.logAppointmentConfirmation({
-        appointmentId: appointmentDetails.id,
-        originalTime: appointmentDetails.start.dateTime,
-        newTime: newTime,
-        customerPhone: workflowData.customerPhone,
-        teammateCallSid: teammateCallSid,
-        status: 'confirmed',
-        timestamp: new Date().toISOString()
-      });
+    if (dbResult.success) {
+      console.log(`📊 [CUSTOMER_VERIFICATION] Appointment confirmation logged to database: ${dbResult.id}`);
       
       return {
-        response: `Perfect! Your appointment "${appointmentDetails.summary}" has been confirmed for ${formatDateTime(newTime)}. You'll receive a confirmation email shortly. Thank you for your time!`,
+        response: `Perfect! Your appointment "${appointmentDetails.summary}" has been confirmed for ${formatDateTime(newTime)}. Our team will contact you with the updated details. Thank you for your time!`,
         call_ended: true,
-        workflowData: { ...workflowData, step: 'confirmed' }
+        workflowData: { ...workflowData, step: 'confirmed', dbLogId: dbResult.id }
       };
     } else {
-      throw new Error('Failed to update calendar');
+      throw new Error('Failed to log confirmation to database');
     }
   } catch (error) {
     console.error('Error confirming appointment:', error);
@@ -131,22 +126,27 @@ async function handleAppointmentConfirmation(workflowData, streamSid) {
 // Handle appointment rescheduling
 async function handleAppointmentRescheduling(workflowData, streamSid) {
   try {
-    const { appointmentDetails, teammateCallSid } = workflowData;
+    const { appointmentDetails, teammateCallSid, customerPhone, language } = workflowData;
     
-    // Log rescheduling request
-    await databaseService.logAppointmentRescheduling({
+    // Log rescheduling request to database
+    const dbResult = await customerVerificationDB.logAppointmentRescheduling({
       appointmentId: appointmentDetails.id,
+      appointmentSummary: appointmentDetails.summary,
       originalTime: appointmentDetails.start.dateTime,
-      customerPhone: workflowData.customerPhone,
+      customerPhone: customerPhone,
       teammateCallSid: teammateCallSid,
-      status: 'rescheduling_requested',
-      timestamp: new Date().toISOString()
+      language: language || 'english',
+      callDuration: null // Will be set by the caller
     });
+    
+    if (dbResult.success) {
+      console.log(`📊 [CUSTOMER_VERIFICATION] Rescheduling request logged to database: ${dbResult.id}`);
+    }
     
     return {
       response: `I understand you'd like to reschedule your "${appointmentDetails.summary}" appointment. I'll have our team contact you to find a better time that works for you. Thank you for letting us know!`,
       call_ended: true,
-      workflowData: { ...workflowData, step: 'rescheduling_requested' }
+      workflowData: { ...workflowData, step: 'rescheduling_requested', dbLogId: dbResult.id }
     };
   } catch (error) {
     console.error('Error handling rescheduling:', error);
@@ -161,22 +161,27 @@ async function handleAppointmentRescheduling(workflowData, streamSid) {
 // Handle appointment cancellation
 async function handleAppointmentCancellation(workflowData, streamSid) {
   try {
-    const { appointmentDetails, teammateCallSid } = workflowData;
+    const { appointmentDetails, teammateCallSid, customerPhone, language } = workflowData;
     
-    // Log cancellation
-    await databaseService.logAppointmentCancellation({
+    // Log cancellation to database
+    const dbResult = await customerVerificationDB.logAppointmentCancellation({
       appointmentId: appointmentDetails.id,
+      appointmentSummary: appointmentDetails.summary,
       originalTime: appointmentDetails.start.dateTime,
-      customerPhone: workflowData.customerPhone,
+      customerPhone: customerPhone,
       teammateCallSid: teammateCallSid,
-      status: 'cancelled',
-      timestamp: new Date().toISOString()
+      language: language || 'english',
+      callDuration: null // Will be set by the caller
     });
+    
+    if (dbResult.success) {
+      console.log(`📊 [CUSTOMER_VERIFICATION] Cancellation logged to database: ${dbResult.id}`);
+    }
     
     return {
       response: `I understand you can't make the appointment. I've noted that you'd like to cancel your "${appointmentDetails.summary}" appointment. Thank you for letting us know, and we hope to see you in the future!`,
       call_ended: true,
-      workflowData: { ...workflowData, step: 'cancelled' }
+      workflowData: { ...workflowData, step: 'cancelled', dbLogId: dbResult.id }
     };
   } catch (error) {
     console.error('Error handling cancellation:', error);

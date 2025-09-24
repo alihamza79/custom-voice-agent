@@ -6,8 +6,67 @@ const performanceLogger = require('../../utils/performanceLogger');
 const sessionManager = require('../../services/sessionManager');
 const calendarPreloader = require('../../services/calendarPreloader');
 const outboundWebSocketService = require('../../services/outboundWebSocketService');
+const callTerminationService = require('../../services/callTerminationService');
+const customerVerificationDB = require('../../services/customerVerificationDatabaseService');
 
 const openai = new OpenAI();
+
+// Enhanced language detection (from customer intent node)
+function detectLanguage(transcript) {
+  if (!transcript || transcript.trim() === '') return 'english';
+  
+  const hindiWords = ['है', 'हैं', 'हूं', 'मैं', 'आप', 'क्या', 'कैसे', 'कब', 'कहाँ', 'क्यों', 'हाँ', 'नहीं', 'ठीक', 'अच्छा', 'बहुत', 'धन्यवाद', 'कृपया', 'माफ', 'समझ', 'बात', 'समय', 'दिन', 'सप्ताह', 'महीना', 'साल'];
+  const urduWords = ['ہے', 'ہیں', 'ہوں', 'میں', 'آپ', 'کیا', 'کیسے', 'کب', 'کہاں', 'کیوں', 'ہاں', 'نہیں', 'ٹھیک', 'اچھا', 'بہت', 'شکریہ', 'برائے', 'معاف', 'سمجھ', 'بات', 'وقت', 'دن', 'ہفتہ', 'مہینہ', 'سال'];
+  
+  const words = transcript.toLowerCase().split(/\s+/);
+  const hindiCount = words.filter(word => hindiWords.some(hindiWord => word.includes(hindiWord))).length;
+  const urduCount = words.filter(word => urduWords.some(urduWord => word.includes(urduWord))).length;
+  
+  if (hindiCount > urduCount && hindiCount > 0) return 'hindi';
+  if (urduCount > hindiCount && urduCount > 0) return 'urdu';
+  if (hindiCount > 0 || urduCount > 0) return 'hindi_mixed';
+  
+  return 'english';
+}
+
+// Enhanced response generation with better context (from teammate intent node)
+function generateContextualResponse(intent, transcript, language, appointmentDetails) {
+  const baseResponses = generateCustomerVerificationResponse(intent, transcript, language);
+  
+  // Add appointment-specific context
+  if (appointmentDetails) {
+    const appointmentName = appointmentDetails.summary || 'your appointment';
+    const appointmentTime = appointmentDetails.start?.dateTime ? 
+      formatDateTime(appointmentDetails.start.dateTime) : 'the scheduled time';
+    
+    if (intent === 'appointment_confirmed') {
+      return `${baseResponses} Your "${appointmentName}" is now confirmed for ${appointmentTime}.`;
+    } else if (intent === 'appointment_rescheduled') {
+      return `${baseResponses} We'll help you find a better time for "${appointmentName}".`;
+    } else if (intent === 'appointment_declined') {
+      return `${baseResponses} We understand "${appointmentName}" at ${appointmentTime} doesn't work for you.`;
+    }
+  }
+  
+  return baseResponses;
+}
+
+// Enhanced error handling (from teammate intent node)
+function handleWorkflowError(error, context, state) {
+  console.error(`❌ [CUSTOMER_VERIFICATION] Error in ${context}:`, error);
+  
+  const errorResponse = state.language === 'hindi' ? 
+    'माफ करें, कुछ तकनीकी समस्या आ रही है। कृपया बाद में कॉल करें।' :
+    state.language === 'urdu' ?
+    'معاف کیجیے، کچھ تکنیکی مسئلہ آرہا ہے۔ برائے کرم بعد میں کال کریں۔' :
+    "I apologize, but I'm experiencing some technical difficulties. Please try calling back later.";
+  
+  return {
+    response: errorResponse,
+    call_ended: true,
+    workflowData: { ...state.workflowData, step: 'error', error: error.message }
+  };
+}
 
 // Format date and time for display
 function formatDateTime(dateTimeString) {
@@ -222,9 +281,12 @@ const outboundCustomerVerifyIntentNode = RunnableLambda.from(async (state) => {
   });
   
   try {
-    // Get language for intent classification
-    const language = state.language || 'english';
+    // Enhanced language detection
+    const detectedLanguage = detectLanguage(state.transcript);
+    const language = state.language || detectedLanguage;
     const languageNote = language === 'english' ? '' : ` The customer is speaking in ${language}, but always respond with the English category name.`;
+    
+    console.log(`🌐 [CUSTOMER_VERIFICATION] Language detected: ${detectedLanguage}, using: ${language}`);
     
     globalTimingLogger.startOperation('OpenAI Customer Verification Intent Classification');
     
@@ -326,6 +388,9 @@ Classify this into one of the 5 categories.`;
       try {
         globalTimingLogger.startOperation('Appointment Confirmation Workflow');
         
+        // Get appointment details from workflow data
+        const appointmentDetails = workflowData?.appointmentDetails || state.workflowData?.appointmentDetails;
+        
         // 🚀 PERFORMANCE OPTIMIZATION: Use calendar preloader for optimized fetching
         // Check if calendar data is already available or start preload
         if (session && !session.preloadedAppointments) {
@@ -423,9 +488,9 @@ Classify this into one of the 5 categories.`;
       } catch (error) {
         globalTimingLogger.logError(error, 'Appointment Confirmation Workflow');
         globalTimingLogger.endOperation('Appointment Confirmation Workflow');
-        // Fallback response
-        workflowResponse = generateCustomerVerificationResponse(classifiedIntent, state.transcript, state.language || 'english');
-        workflowData = { shouldEndCall: true, appointment_confirmed: true };
+        const errorResult = handleWorkflowError(error, 'Appointment Confirmation', state);
+        workflowResponse = errorResult.response;
+        workflowData = errorResult.workflowData;
       }
       
     } else if (classifiedIntent === 'appointment_rescheduled') {
@@ -606,6 +671,45 @@ Classify this into one of the 5 categories.`;
                          workflowData?.call_ended || 
                          workflowResponse.toLowerCase().includes('goodbye') ||
                          workflowResponse.toLowerCase().includes('have a great day');
+    
+    // Graceful call ending - similar to teammate intent node
+    if (shouldEndCall) {
+      console.log('📞 [CUSTOMER_VERIFICATION] Call ending gracefully...');
+      
+      // Log call duration and final status to database
+      try {
+        const callDuration = Date.now() - (state.callStartTime || Date.now());
+        const session = sessionManager.getSession(state.streamSid);
+        const workflowData = session?.langChainSession?.workflowData || {};
+        
+        // Update database with call duration
+        if (workflowData.dbLogId) {
+          await customerVerificationDB.getCollection().then(collection => 
+            collection.updateOne(
+              { _id: workflowData.dbLogId },
+              { $set: { callDuration: callDuration, finalStatus: classifiedIntent } }
+            )
+          );
+        }
+        
+        console.log(`📊 [CUSTOMER_VERIFICATION] Call ended gracefully - Duration: ${callDuration}ms, Status: ${classifiedIntent}`);
+      } catch (dbError) {
+        console.error('❌ Error updating call duration in database:', dbError);
+      }
+      
+      // Schedule graceful call termination
+      setTimeout(async () => {
+        try {
+          const callSid = state.callerInfo?.callSid || state.callSid;
+          if (callSid) {
+            console.log('🔚 [CUSTOMER_VERIFICATION] Terminating call gracefully...');
+            await callTerminationService.endCall(callSid, state.streamSid);
+          }
+        } catch (terminationError) {
+          console.error('❌ Error terminating call:', terminationError);
+        }
+      }, 2000); // 2 second delay for graceful ending
+    }
     
     const result = {
       ...state,

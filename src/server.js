@@ -501,16 +501,16 @@ wsserver.listen(HTTP_SERVER_PORT, async function () {
   console.log("🚀 [SERVER_STARTUP] 🎉 SERVER STARTED SUCCESSFULLY!");
   console.log("🚀 [SERVER_STARTUP] Timestamp:", new Date().toISOString());
   console.log("🚀 [SERVER_STARTUP] HTTP Server listening on: http://localhost:%s", HTTP_SERVER_PORT);
-  console.log("🚀 [SERVER_STARTUP] WebSocket server should be accessible at: wss://6b0ee0036060.ngrok-free.app/streams");
-  console.log("🚀 [SERVER_STARTUP] Base URL: https://6b0ee0036060.ngrok-free.app");
-  console.log("🚀 [SERVER_STARTUP] TwiML endpoint: https://6b0ee0036060.ngrok-free.app/twiml");
-  console.log("🚀 [SERVER_STARTUP] Status callback: https://6b0ee0036060.ngrok-free.app/outbound-websocket-call-status");
+  console.log("🚀 [SERVER_STARTUP] WebSocket server should be accessible at: wss://9bc0d0823b04.ngrok-free.app/streams");
+  console.log("🚀 [SERVER_STARTUP] Base URL: https://9bc0d0823b04.ngrok-free.app");
+  console.log("🚀 [SERVER_STARTUP] TwiML endpoint: https://9bc0d0823b04.ngrok-free.app/twiml");
+  console.log("🚀 [SERVER_STARTUP] Status callback: https://9bc0d0823b04.ngrok-free.app/outbound-websocket-call-status");
   console.log("🚀 [SERVER_STARTUP] ==========================================");
   
   // Test WebSocket server accessibility
   console.log("🧪 [WEBSOCKET_TEST] Testing WebSocket server accessibility...");
   const WebSocket = require('ws');
-  const testUrl = 'wss://6b0ee0036060.ngrok-free.app/streams?streamSid=test_connection&isOutbound=true';
+  const testUrl = 'wss://9bc0d0823b04.ngrok-free.app/streams?streamSid=test_connection&isOutbound=true';
   console.log("🧪 [WEBSOCKET_TEST] Test URL:", testUrl);
   
   const testWs = new WebSocket(testUrl);

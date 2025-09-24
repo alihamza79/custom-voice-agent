@@ -1,0 +1,39 @@
+{
+  "topics": [
+    {
+      "id": "task_completed",
+      "name": "Task Completed",
+      "description": "Notify teammates when a task has been finished",
+      "keywords": ["done", "completed", "finished", "delivered", "submitted"]
+    },
+    {
+      "id": "progress_shared",
+      "name": "Progress Shared",
+      "description": "Communicate current progress on a task or project",
+      "keywords": ["progress", "update", "status", "ongoing", "working on"]
+    },
+    {
+      "id": "issue_reported",
+      "name": "Issue Reported",
+      "description": "Inform teammates about a problem or blocker encountered",
+      "keywords": ["issue", "bug", "problem", "error", "blocker"]
+    },
+    {
+      "id": "availability_status",
+      "name": "Availability Status",
+      "description": "Communicate availability, absence, or schedule to teammates",
+      "keywords": ["available", "busy", "away", "offline", "out of office"]
+    },
+    {
+      "id": "appreciation_given",
+      "name": "Appreciation Given",
+      "description": "Acknowledge or praise teammates for their work",
+      "keywords": ["thanks", "great job", "well done", "appreciate", "recognition"]
+    }
+  ],
+  "metadata": {
+    "version": "1.0",
+    "created": "2025-01-15",
+    "description": "Five key team announcement and update topics"
+  }
+}

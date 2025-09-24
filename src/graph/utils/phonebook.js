@@ -51,7 +51,13 @@ function identifyCaller(phoneNumber) {
     }
   }
   
-  return null; // Unknown caller
+  // NEW: Return unknown caller info instead of null
+  console.log(`❓ Unknown caller from ${phoneNumber} - treating as potential client`);
+  return {
+    name: "Potential Client",
+    type: "unknown",
+    phoneNumber: phoneNumber
+  };
 }
 
 // Utility function to reload phonebook (useful for testing)

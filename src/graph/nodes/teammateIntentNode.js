@@ -7,6 +7,7 @@ const sessionManager = require('../../services/sessionManager');
 const googleCalendarService = require('../../services/googleCalendarService');
 const calendarPreloader = require('../../services/calendarPreloader');
 const { delayNotificationWorkflow } = require('../../workflows/TeamDelayWorkflow');
+const teamAnnouncementWorkflow = require('../../workflows/TeamAnnouncementWorkflow');
 
 const openai = new OpenAI();
 
@@ -231,6 +232,9 @@ Classify this into one of the 5 categories.`;
       top_p: 1,
       frequency_penalty: 0,
       presence_penalty: 0
+    }, {
+      // Disable LangSmith to reduce warnings and delays
+      langsmith: false
     });
     
     const intent = completion.choices[0].message.content.trim().toLowerCase();
@@ -262,6 +266,52 @@ Classify this into one of the 5 categories.`;
       }
     }
     
+    // Fast team announcement detection - check before expensive operations
+    const announcementTopic = teamAnnouncementWorkflow.detectTopic(state.transcript);
+    if (announcementTopic) {
+      globalTimingLogger.logMoment(`Team announcement detected: ${announcementTopic.name}`);
+      
+      // Process team announcement with fast response
+      const announcementResult = await teamAnnouncementWorkflow.processAnnouncement({
+        transcript: state.transcript,
+        teammateId: state.callerInfo?.phoneNumber || state.phoneNumber || 'unknown',
+        teammateName: state.callerInfo?.name || 'Unknown Teammate',
+        language: state.language || 'english',
+        streamSid: state.streamSid
+      });
+
+      if (announcementResult.success) {
+        // Add assistant response to conversation history
+        conversation_history.push({
+          role: 'assistant',
+          content: announcementResult.response,
+          timestamp: new Date().toISOString(),
+          type: 'team_announcement',
+          topic: announcementResult.topic?.name,
+          memoId: announcementResult.memoId
+        });
+
+        // End call after acknowledgment - skip all other processing
+        globalTimingLogger.endOperation('Teammate Intent Classification');
+        return {
+          ...state,
+          intent: 'team_announcement',
+          systemPrompt: announcementResult.response,
+          endCall: true,
+          call_ended: true,
+          conversation_history: conversation_history,
+          last_system_response: announcementResult.response,
+          turn_count: (state.turn_count || 0) + 1,
+          conversation_state: 'ended',
+          memoId: announcementResult.memoId,
+          topic: announcementResult.topic
+        };
+      } else {
+        // If announcement processing failed, continue with regular intent classification
+        globalTimingLogger.logMoment('Team announcement processing failed, continuing with regular intent classification');
+      }
+    }
+
     // Log intent classification
     globalTimingLogger.logIntentClassification(classifiedIntent);
     
