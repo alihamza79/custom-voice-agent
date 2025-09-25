@@ -214,6 +214,11 @@ class SessionManager {
     
     const session = this.sessions.get(streamSid);
     if (session) {
+      // Check if we should send SMS confirmation before cleanup
+      if (reason === 'connection_closed' && session.callerInfo) {
+        this.triggerSMSCleanup(streamSid, session);
+      }
+      
       // Clean up workflow instances
       for (const [workflowName, workflow] of session.workflowInstances) {
         try {
@@ -247,6 +252,59 @@ class SessionManager {
     }
     
     globalTimingLogger.logMoment(`Session cleaned up: ${streamSid}`);
+  }
+  
+  // Trigger SMS cleanup when connection closes unexpectedly
+  async triggerSMSCleanup(streamSid, session) {
+    try {
+      console.log(`📱 [SESSION_CLEANUP] Checking for SMS trigger for ${streamSid}`);
+      
+      // Check if there was a successful appointment change
+      const langChainSession = session.langChainSession;
+      if (langChainSession && langChainSession.sessionData) {
+        const sessionData = langChainSession.sessionData;
+        
+        // Check if appointment was successfully changed or customer verification completed
+        if (sessionData.response && 
+            (sessionData.response.includes('successfully shifted') || 
+             sessionData.response.includes('successfully rescheduled') ||
+             sessionData.response.includes('successfully cancelled') ||
+             sessionData.response.includes('appointment confirmed') ||
+             sessionData.response.includes('appointment rescheduled') ||
+             sessionData.response.includes('appointment declined'))) {
+          
+          console.log(`📱 [SESSION_CLEANUP] Appointment change detected, sending SMS...`);
+          
+          // Calculate call duration
+          const callDuration = Date.now() - (session.createdAt || Date.now());
+          
+          // Determine outcome based on response
+          let outcome = 'customer_verification_completed';
+          if (sessionData.response.includes('successfully shifted')) outcome = 'rescheduled';
+          else if (sessionData.response.includes('successfully cancelled')) outcome = 'cancelled';
+          else if (sessionData.response.includes('appointment confirmed')) outcome = 'appointment_confirmed';
+          else if (sessionData.response.includes('appointment rescheduled')) outcome = 'appointment_rescheduled';
+          else if (sessionData.response.includes('appointment declined')) outcome = 'appointment_declined';
+          
+          // Send SMS asynchronously
+          setTimeout(async () => {
+            try {
+              const callTerminationService = require('./callTerminationService');
+              await callTerminationService.sendConfirmationSMS(
+                streamSid,
+                outcome,
+                callDuration
+              );
+              console.log(`📱 [SESSION_CLEANUP] SMS sent successfully for ${streamSid}`);
+            } catch (smsError) {
+              console.error(`❌ [SESSION_CLEANUP] Error sending SMS for ${streamSid}:`, smsError);
+            }
+          }, 1000); // 1 second delay
+        }
+      }
+    } catch (error) {
+      console.error(`❌ [SESSION_CLEANUP] Error in SMS cleanup for ${streamSid}:`, error);
+    }
   }
   
   // Start periodic cleanup of expired sessions

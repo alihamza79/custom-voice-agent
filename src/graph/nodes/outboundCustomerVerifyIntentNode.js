@@ -704,6 +704,31 @@ Classify this into one of the 5 categories.`;
           if (callSid) {
             console.log('🔚 [CUSTOMER_VERIFICATION] Terminating call gracefully...');
             await callTerminationService.endCall(callSid, state.streamSid);
+            
+            // Send SMS confirmation after call termination
+            setTimeout(async () => {
+              try {
+                console.log('📱 [CUSTOMER_VERIFICATION] Sending SMS confirmation...');
+                
+                // Determine specific outcome based on classified intent
+                let smsOutcome = 'customer_verification_completed';
+                if (classifiedIntent === 'appointment_confirmed') {
+                  smsOutcome = 'confirmed';
+                } else if (classifiedIntent === 'appointment_rescheduled') {
+                  smsOutcome = 'rescheduled';
+                } else if (classifiedIntent === 'appointment_declined') {
+                  smsOutcome = 'cancelled';
+                }
+                
+                await callTerminationService.sendConfirmationSMS(
+                  state.streamSid, 
+                  smsOutcome, 
+                  callDuration
+                );
+              } catch (smsError) {
+                console.error('❌ [CUSTOMER_VERIFICATION] Error sending SMS confirmation:', smsError);
+              }
+            }, 1000); // 1 second after call termination
           }
         } catch (terminationError) {
           console.error('❌ Error terminating call:', terminationError);

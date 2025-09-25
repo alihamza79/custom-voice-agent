@@ -378,16 +378,13 @@ Classify this into one of the 5 categories.`;
         // INTELLIGENT GENERIC FILLER: Send appropriate filler based on intent
         // Context-based humanistic filler words for delay notification
         const fillers = [
-          "Let me pull up your appointments",
-          "Checking your schedule",
-          "Let me see what meetings you have",
-          "Accessing your calendar",
-          "Looking at your upcoming meetings",
-          "Reviewing your schedule",
-          "Getting your appointment details",
-          "Checking what you have planned",
-          "Looking up your meetings",
-          "Fetching your calendar info"
+          "Let me pull up your appointments and check your current schedule",
+          "I'm checking your calendar and looking at your meetings right now",
+          "Let me see what meetings you have and review your schedule",
+          "I'm looking up your meetings and fetching your calendar information",
+          "Let me access your calendar and pull up all your appointments",
+          "I'm checking your schedule and reviewing your upcoming meetings",
+          "Let me fetch your calendar data and see what appointments you have"
         ];
         const immediateResponse = fillers[Math.floor(Math.random() * fillers.length)];
         

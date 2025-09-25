@@ -11,6 +11,34 @@ const performanceLogger = require('../utils/performanceLogger');
 
 const openai = new OpenAI();
 
+// Helper function to speak filler words during long operations
+async function speakFiller(fillerText, streamSid, language = 'english') {
+  try {
+    const { getCurrentMediaStream } = require('../server');
+    const mediaStream = getCurrentMediaStream();
+    
+    if (mediaStream) {
+      console.log(`💬 Speaking filler: "${fillerText}"`);
+      
+      // Set up mediaStream for TTS
+      mediaStream.speaking = true;
+      mediaStream.ttsStart = Date.now();
+      mediaStream.firstByte = true;
+      mediaStream.currentMediaStream = mediaStream;
+      
+      // Speak the filler
+      const azureTTSService = require('../services/azureTTSService');
+      await azureTTSService.synthesizeStreaming(
+        fillerText,
+        mediaStream,
+        language
+      );
+    }
+  } catch (error) {
+    console.error('❌ Error speaking filler:', error);
+  }
+}
+
 // Simple call termination function - COPY FROM CUSTOMER APPROACH
 async function terminateCallRobustly(streamSid, delay = 0) {
   console.log('📞 Initiating simple call termination (customer approach)...');
@@ -635,6 +663,19 @@ async function updateAppointmentWithTime(selectedAppointment, newDateTime, calle
     };
     
     try {
+      // Speak filler before calendar update
+      const updateFillers = [
+        "I'm updating your appointment in the calendar system right now",
+        "Let me save these changes to your Google Calendar",
+        "I'm processing the appointment update and confirming the changes",
+        "Let me update your calendar with the new appointment time"
+      ];
+      const updateFiller = updateFillers[Math.floor(Math.random() * updateFillers.length)];
+      
+      // Speak filler in parallel with calendar update
+      const fillerPromise = speakFiller(updateFiller, streamSid, language);
+      
+      // Perform calendar update
       await googleCalendarService.updateAppointment(selectedAppointment.id, updateData);
       
       // Log the delay to database
@@ -648,6 +689,16 @@ async function updateAppointmentWithTime(selectedAppointment, newDateTime, calle
       });
       
       // Get appointments for handlePostUpdateFlow
+      // Speak filler before fetching appointments
+      const fetchFillers = [
+        "Let me get your updated calendar and check your appointments",
+        "I'm fetching your calendar data to show you the current schedule",
+        "Let me pull up your updated appointments and calendar information",
+        "I'm checking your calendar to get the latest appointment details"
+      ];
+      const fetchFiller = fetchFillers[Math.floor(Math.random() * fetchFillers.length)];
+      const fetchFillerPromise = speakFiller(fetchFiller, streamSid, language);
+      
       const appointments = await googleCalendarService.getAppointments(callerInfo);
       
       // Ask for more help instead of ending call immediately

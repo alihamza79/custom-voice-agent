@@ -1,5 +1,6 @@
 // Call Termination Service - Robust call ending using Twilio's proven method
 const twilio = require('twilio');
+const callOutcomeTracker = require('./callOutcomeTracker');
 
 class CallTerminationService {
   constructor() {
@@ -135,6 +136,34 @@ class CallTerminationService {
     }
     
     return await this.endCall(callSid, streamSid);
+  }
+
+  // Send SMS confirmation after call ends
+  async sendConfirmationSMS(streamSid, callOutcome = null, callDuration = null) {
+    try {
+      console.log('📱 Sending SMS confirmation after call end...');
+      
+      // Track the outcome if not already tracked
+      if (callOutcome) {
+        const appointmentDetails = callOutcomeTracker.extractAppointmentDetails(streamSid);
+        callOutcomeTracker.trackOutcome(streamSid, callOutcome, appointmentDetails, callDuration);
+      }
+      
+      // Send confirmation SMS
+      const result = await callOutcomeTracker.sendConfirmationSMS(streamSid, callOutcome);
+      
+      if (result.success) {
+        console.log('✅ SMS confirmation sent successfully');
+      } else {
+        console.error('❌ Failed to send SMS confirmation:', result.error);
+      }
+      
+      return result;
+      
+    } catch (error) {
+      console.error('❌ Error sending SMS confirmation:', error);
+      return { success: false, error: error.message };
+    }
   }
 }
 

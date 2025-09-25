@@ -55,14 +55,15 @@ async function generateResponse(state, config = {}) {
 
     // timer.checkpoint('llm_init_start', 'Initializing OpenAI LLM with tools');
     // Use cached model or create new one with optimized settings
-    const modelKey = `${config.model || "gpt-4o-mini"}_${config.temperature || 0.3}_${config.maxTokens || 200}`;
+    const modelKey = `${config.model || "gpt-4o-mini"}_${config.temperature || 0.1}_${config.maxTokens || 150}`;
     let model = modelCache.get(modelKey);
     if (!model) {
       model = new ChatOpenAI({
         modelName: config.model || "gpt-4o-mini",
-        temperature: config.temperature || 0.3, // Lower for consistency and speed
-        maxTokens: config.maxTokens || 200,     // Reduced from 300 for faster responses
-        streaming: true                         // Enable streaming for immediate response start
+        temperature: config.temperature || 0.1, // Lower for faster, more consistent responses
+        maxTokens: config.maxTokens || 150,     // Reduced for faster responses
+        streaming: true,                        // Enable streaming for immediate response start
+        timeout: 10000                         // 10 second timeout to prevent hanging
       }).bindTools(tools);
       modelCache.set(modelKey, model);
       // timer.checkpoint('llm_created_cached', 'LLM created and cached with streaming enabled');
@@ -90,6 +91,8 @@ async function generateResponse(state, config = {}) {
     // Enhanced system prompt with natural end call assistance
     const systemPrompt = `You help ${callerInfo.name || 'caller'} manage appointments.
 
+IMPORTANT: You MUST call tools when the user confirms or declines assistance. Do not just respond with text - you must execute the appropriate tools.
+
 WORKFLOW:
 1. User wants changes → call get_appointments first
 2. User specifies appointment → ask for new details
@@ -100,9 +103,21 @@ WORKFLOW:
 RULES:
 - Be direct, ask ONE question at a time
 - ALWAYS confirm before making changes
-- Recognize confirmations: "yes", "correct", "do it", "go ahead"
-- Execute immediately after confirmation
+- Recognize confirmations: "yes", "correct", "do it", "go ahead", "it is correct"
+- Execute immediately after confirmation - DO NOT ask again
 - After completing any task, naturally offer further assistance
+- When user confirms with "yes", "correct", "it is correct" → IMMEDIATELY call shift_appointment tool
+- After calling shift_appointment tool → ALWAYS offer assistance using assistance offer patterns
+- When user responds to assistance offer with "no", "thanks", "that's all" → call analyze_end_call_intent then end_call tool
+
+TOOL CALL TRIGGERS:
+- "Yes. It is correct." → Call shift_appointment tool
+- "Yes, that's right." → Call shift_appointment tool
+- "Correct." → Call shift_appointment tool
+- "Yes." → Call shift_appointment tool
+- "I don't need anything else." → Call analyze_end_call_intent then end_call tool
+- "No, thanks." → Call analyze_end_call_intent then end_call tool
+- "That's all." → Call analyze_end_call_intent then end_call tool
 
 ASSISTANCE OFFER PATTERNS:
 - "Is there anything else I can help you with today?"
@@ -111,11 +126,48 @@ ASSISTANCE OFFER PATTERNS:
 - "Is there anything more I can do for you?"
 
 HANDLING ASSISTANCE RESPONSES:
-- If user says "no", "thanks", "that's all", "I'm good" → call analyze_end_call_intent
+- If user says "no", "thanks", "that's all", "I'm good", "I don't need anything" → call analyze_end_call_intent
 - If analyze_end_call_intent returns "ANALYSIS_RESULT: END_CALL" → respond with a polite goodbye and call end_call tool
 - If analyze_end_call_intent returns "ANALYSIS_RESULT: CONTINUE" → help them with their request
 - If user has new requests → help them with the new request
 - If user asks questions → answer their questions
+
+DETECTING ASSISTANCE RESPONSES:
+- Look for phrases like "no", "thanks", "that's all", "I'm good", "I don't need anything", "I don't need anything else"
+- These indicate the user is responding to your assistance offer and likely wants to end the call
+
+CONVERSATION STATE TRACKING:
+- Track when you offer assistance (set assistanceOffered = true)
+- Track when user responds to assistance offer (set isResponseToAssistance = true)
+- Use these flags to determine when to call analyze_end_call_intent
+
+CRITICAL: After successfully executing shift_appointment or cancel_appointment, ALWAYS offer assistance using one of the assistance offer patterns above.
+
+WORKFLOW SEQUENCE:
+1. User confirms appointment change → Call shift_appointment tool immediately
+2. After shift_appointment tool completes → Offer assistance: "Is there anything else I can help you with today?"
+3. User responds to assistance offer → Use analyze_end_call_intent to determine if they want to end
+4. If analyze_end_call_intent returns "END_CALL" → Call end_call tool to end conversation
+
+CRITICAL: When user says "Yes. It is correct." or similar confirmation, you MUST call the shift_appointment tool immediately. Do NOT ask for confirmation again.
+
+CONVERSATION FLOW:
+- If user confirms appointment change → Call shift_appointment tool
+- After shift_appointment tool completes → Offer assistance
+- If user declines assistance → Call analyze_end_call_intent then end_call tool
+- If user accepts assistance → Help with new request
+
+MANDATORY TOOL EXECUTION:
+- When user confirms with "Yes. It is correct." → IMMEDIATELY call shift_appointment tool
+- When user says "I don't need anything else." → IMMEDIATELY call analyze_end_call_intent then end_call tool
+- When user says "No, thanks." → IMMEDIATELY call analyze_end_call_intent then end_call tool
+- When user says "That's all." → IMMEDIATELY call analyze_end_call_intent then end_call tool
+
+EXAMPLES OF REQUIRED TOOL CALLS:
+- User: "Yes. It is correct." → You MUST call shift_appointment tool
+- User: "I don't need anything else." → You MUST call analyze_end_call_intent then end_call tool
+- User: "No, thanks." → You MUST call analyze_end_call_intent then end_call tool
+- User: "That's all." → You MUST call analyze_end_call_intent then end_call tool
 
 TOOLS: get_appointments, shift_appointment, cancel_appointment, end_call, analyze_end_call_intent
 
@@ -129,8 +181,8 @@ Now: ${new Date().toISOString()}`;
     const systemMessage = new SystemMessage(systemPrompt);
 
     // timer.checkpoint('prompt_prep', 'Preparing messages for LLM invocation');
-    // Limit context window for faster processing (keep last 6 messages + system)
-    const recentMessages = messages.slice(-6);
+    // Limit context window for faster processing (keep last 4 messages + system)
+    const recentMessages = messages.slice(-4);
     const modelMessages = [systemMessage, ...recentMessages];
     // timer.checkpoint('prompt_ready', 'Messages prepared for model', { 
     //   messageCount: modelMessages.length, 
@@ -617,6 +669,13 @@ function trackConversationState(response, state) {
     call.name === 'shift_appointment' || call.name === 'cancel_appointment'
   );
   
+  console.log('🔍 DEBUG trackConversationState:', {
+    hasToolCalls,
+    toolCallNames: response.tool_calls?.map(call => call.name) || [],
+    completedTask,
+    responseContent: responseContent.substring(0, 100)
+  });
+  
   // Check if we're offering assistance
   const offeringAssistance = responseContent.toLowerCase().includes('anything else') ||
                             responseContent.toLowerCase().includes('help you with') ||
@@ -625,6 +684,14 @@ function trackConversationState(response, state) {
   
   // ENHANCED: Also check if this is a response to a previous assistance offer
   const isResponseToAssistance = currentState.assistanceOffered && !offeringAssistance;
+  
+  // Check if user is declining assistance (common phrases)
+  const decliningAssistance = responseContent.toLowerCase().includes('no') ||
+                            responseContent.toLowerCase().includes('thanks') ||
+                            responseContent.toLowerCase().includes('that\'s all') ||
+                            responseContent.toLowerCase().includes('i\'m good') ||
+                            responseContent.toLowerCase().includes('i don\'t need') ||
+                            responseContent.toLowerCase().includes('nothing else');
   
   // Update conversation state
   const newState = {
@@ -636,7 +703,8 @@ function trackConversationState(response, state) {
       call.name === 'shift_appointment' || call.name === 'cancel_appointment'
     )?.name) : currentState.lastTaskType,
     assistanceOfferMessage: offeringAssistance ? responseContent : currentState.assistanceOfferMessage,
-    isResponseToAssistance: isResponseToAssistance
+    isResponseToAssistance: isResponseToAssistance,
+    decliningAssistance: decliningAssistance
   };
   
   console.log('🔄 Conversation state updated:', {
@@ -645,6 +713,7 @@ function trackConversationState(response, state) {
     endCallEligible: newState.endCallEligible,
     lastTaskType: newState.lastTaskType,
     isResponseToAssistance: newState.isResponseToAssistance,
+    decliningAssistance: newState.decliningAssistance,
     responseContent: responseContent.substring(0, 100)
   });
   

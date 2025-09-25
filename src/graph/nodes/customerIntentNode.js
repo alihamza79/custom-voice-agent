@@ -6,6 +6,7 @@ const { globalTimingLogger } = require('../../utils/timingLogger');
 const performanceLogger = require('../../utils/performanceLogger');
 const calendarPreloader = require('../../services/calendarPreloader');
 const sessionManager = require('../../services/sessionManager');
+const callTerminationService = require('../../services/callTerminationService');
 
 const openai = new OpenAI();
 
@@ -100,13 +101,71 @@ const customerIntentNode = RunnableLambda.from(async (state) => {
       
       globalTimingLogger.logModelOutput(workflowResult.response, 'WORKFLOW RESPONSE');
       
+      // Add assistant response to conversation history
+      const conversation_history = [...(state.conversation_history || [])];
+      conversation_history.push({
+        role: 'assistant',
+        content: workflowResult.response,
+        timestamp: new Date().toISOString(),
+        type: 'workflow_continuation',
+        intent: 'shift_cancel_appointment'
+      });
+      
+      // Check if workflow indicates call should end
+      const shouldEndCall = workflowResult.endCall || 
+                           workflowResult.response.toLowerCase().includes('goodbye') ||
+                           workflowResult.response.toLowerCase().includes('have a great day') ||
+                           workflowResult.response.toLowerCase().includes('sorry, i couldn\'t process') ||
+                           workflowResult.response.toLowerCase().includes('couldn\'t process that request');
+      
+      // Add graceful call termination logic similar to teammate intent node
+      if (shouldEndCall) {
+        console.log('📞 [CUSTOMER_INTENT] Call ending gracefully...');
+        try {
+          const callDuration = Date.now() - (state.callStartTime || Date.now());
+          console.log(`📊 [CUSTOMER_INTENT] Call ended gracefully - Duration: ${callDuration}ms`);
+          
+          // Schedule graceful call termination
+          setTimeout(async () => {
+            try {
+              const callSid = state.callerInfo?.callSid || state.callSid;
+              if (callSid) {
+                console.log('🔚 [CUSTOMER_INTENT] Terminating call gracefully...');
+                await callTerminationService.endCall(callSid, state.streamSid);
+                
+                // Send SMS confirmation after call termination
+                setTimeout(async () => {
+                  try {
+                    console.log('📱 [CUSTOMER_INTENT] Sending SMS confirmation...');
+                    await callTerminationService.sendConfirmationSMS(
+                      state.streamSid, 
+                      'confirmed', 
+                      callDuration
+                    );
+                  } catch (smsError) {
+                    console.error('❌ [CUSTOMER_INTENT] Error sending SMS confirmation:', smsError);
+                  }
+                }, 1000); // 1 second after call termination
+              }
+            } catch (terminationError) {
+              console.error('❌ [CUSTOMER_INTENT] Error terminating call:', terminationError);
+            }
+          }, 2000); // 2 second delay for graceful ending
+          
+        } catch (error) {
+          console.error('❌ [CUSTOMER_INTENT] Error in graceful call ending:', error);
+        }
+      }
+      
       return {
         ...state,
         intent: 'shift_cancel_appointment',
         systemPrompt: workflowResult.response,
-        call_ended: workflowResult.endCall || false,
-        conversation_state: 'workflow',
+        call_ended: shouldEndCall,
+        conversation_history: conversation_history,
+        last_system_response: workflowResult.response,
         turn_count: (state.turn_count || 0) + 1,
+        conversation_state: shouldEndCall ? 'ended' : 'workflow',
         workflowBypass: true
       };
       
@@ -174,6 +233,9 @@ Examples:
 - "Can you hear me?" → no_intent_detected
 - "I want to reschedule my appointment" → shift_cancel_appointment
 - "Shift appointment" → shift_cancel_appointment
+- "Yes. It is correct." → shift_cancel_appointment (user confirming appointment change)
+- "Yes" → shift_cancel_appointment (user confirming appointment change)
+- "Correct" → shift_cancel_appointment (user confirming appointment change)
 - "What's my bill?" → invoicing_question
 - "When is my next appointment?" → appointment_info
 - "I need groceries delivered too" → additional_demands
@@ -202,7 +264,8 @@ Classify this into one of the 5 categories.`;
     
     // Validate intent and map to our 5 categories
     let classifiedIntent;
-    if (intent.includes('shift') || intent.includes('cancel') || intent.includes('reschedule')) {
+    if (intent.includes('shift') || intent.includes('cancel') || intent.includes('reschedule') ||
+        intent.includes('yes') || intent.includes('correct') || intent.includes('it is correct')) {
       classifiedIntent = 'shift_cancel_appointment';
     } else if (intent.includes('invoic') || intent.includes('bill') || intent.includes('payment')) {
       classifiedIntent = 'invoicing_question';
@@ -217,7 +280,9 @@ Classify this into one of the 5 categories.`;
       const transcript = state.transcript.toLowerCase();
       if (transcript.includes('shift') || transcript.includes('cancel') || 
           transcript.includes('reschedule') || transcript.includes('move') || 
-          transcript.includes('change') || transcript.includes('appointment')) {
+          transcript.includes('change') || transcript.includes('appointment') ||
+          transcript.includes('yes') || transcript.includes('correct') || 
+          transcript.includes('it is correct') || transcript.includes('that\'s right')) {
         classifiedIntent = 'shift_cancel_appointment';
       } else {
         classifiedIntent = intent.includes('hello') || intent.includes('hi') || intent.includes('thank') 
@@ -483,6 +548,45 @@ Classify this into one of the 5 categories.`;
                          (classifiedIntent === 'shift_cancel_appointment' ? 'workflow' : 'active'),
       session_initialized: true
     };
+    
+    // Add graceful call termination logic similar to teammate intent node
+    if (shouldEndCall) {
+      console.log('📞 [CUSTOMER_INTENT] Call ending gracefully...');
+      try {
+        const callDuration = Date.now() - (state.callStartTime || Date.now());
+        console.log(`📊 [CUSTOMER_INTENT] Call ended gracefully - Duration: ${callDuration}ms`);
+        
+        // Schedule graceful call termination
+        setTimeout(async () => {
+          try {
+            const callSid = state.callerInfo?.callSid || state.callSid;
+            if (callSid) {
+              console.log('🔚 [CUSTOMER_INTENT] Terminating call gracefully...');
+              await callTerminationService.endCall(callSid, state.streamSid);
+              
+              // Send SMS confirmation after call termination
+              setTimeout(async () => {
+                try {
+                  console.log('📱 [CUSTOMER_INTENT] Sending SMS confirmation...');
+                  await callTerminationService.sendConfirmationSMS(
+                    state.streamSid, 
+                    'confirmed', 
+                    callDuration
+                  );
+                } catch (smsError) {
+                  console.error('❌ [CUSTOMER_INTENT] Error sending SMS confirmation:', smsError);
+                }
+              }, 1000); // 1 second after call termination
+            }
+          } catch (terminationError) {
+            console.error('❌ [CUSTOMER_INTENT] Error terminating call:', terminationError);
+          }
+        }, 2000); // 2 second delay for graceful ending
+        
+      } catch (error) {
+        console.error('❌ [CUSTOMER_INTENT] Error in graceful call ending:', error);
+      }
+    }
     
     globalTimingLogger.endOperation('Intent Classification');
     globalTimingLogger.logModelOutput(workflowResponse, 'FINAL RESPONSE');
