@@ -202,7 +202,7 @@ function isValidTranscript(transcript, confidence = 0) {
   }
   
   // Must have at least 3 real words for a complete thought (unless it's very specific like "yes" or "no")
-  const shortValidResponses = ['yes', 'no', 'okay', 'ok', 'sure', 'thanks', 'thank you', 'goodbye', 'bye', 'hello', 'hi', 'yeah', 'yep', 'nope', 'right', 'correct', 'wrong', 'true', 'false', 'kindly', 'please', 'can', 'you', 'shift', 'change', 'move', 'cancel', 'appointment', 'meeting', 'no bye', 'yes please', 'and let me', 'done', 'time will be same', 'same time', 'keep same time'];
+  const shortValidResponses = ['yes', 'no', 'okay', 'ok', 'sure', 'thanks', 'thank you', 'goodbye', 'bye', 'hello', 'hi', 'yeah', 'yep', 'nope', 'right', 'correct', 'wrong', 'true', 'false', 'kindly', 'please', 'can', 'you', 'shift', 'change', 'move', 'cancel', 'appointment', 'meeting', 'no bye', 'yes please', 'and let me', 'done', 'time will be same', 'same time', 'keep same time', 'not correct', 'incorrect', 'wrong date', 'wrong time', 'change it', 'different', 'another', 'i want', 'i need', 'i would like', 'can you', 'could you', 'confirmed', 'agreed', 'accepted', 'approved', 'exactly', 'precisely', 'absolutely'];
   
   // CRITICAL: Allow confirmation phrases
   const confirmationPhrases = [

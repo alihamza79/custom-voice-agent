@@ -198,3 +198,4 @@ Call Duration: 1m 45s
 - **Environment Config**: ✅ Uses +491726073488 as default
 
 The SMS integration is fully functional and will send notifications to +491726073488 whenever customers make appointment changes!
+

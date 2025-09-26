@@ -209,6 +209,7 @@ Examples:
 - "Hello" → no_intent_detected
 - "Can you hear me?" → no_intent_detected
 - "I need to delay my meeting" → delay_notification
+- "I need help rescheduling" → delay_notification
 - "Delay appointment" → delay_notification
 - "Reschedule my call" → delay_notification
 - "Schedule a new meeting" → schedule_meeting

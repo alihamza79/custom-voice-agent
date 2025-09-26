@@ -317,8 +317,34 @@ Respond with ONLY the appointment index (1, 2, etc.) or "unclear" if you can't d
       const timeResult = await parseTimeFromTranscript(transcript, selectedAppointment);
       
       if (timeResult.success) {
-        // Both appointment and time provided - ask for confirmation
-        const response = `I understand you want to delay "${selectedAppointment.summary}" to ${formatDateTime(timeResult.newDateTime.toISOString())}. Is this correct?`;
+        // Both appointment and time provided - ask for confirmation using LLM
+        const confirmationPrompt = `The user wants to reschedule an appointment. Generate a natural confirmation message.
+
+Appointment: "${selectedAppointment.summary}"
+New time: ${formatDateTime(timeResult.newDateTime.toISOString())}
+
+Guidelines:
+- Always confirm critical details (date + time) before finalizing
+- Use natural acknowledgments: "Alright," "Perfect," "Thanks for clarifying," "Got it"
+- Be conversational and friendly
+- Ask for confirmation clearly
+- Keep it concise
+
+Example format: "Just to confirm, you want to move your appointment to [day, date, time]. Is that correct?"
+
+Respond with just the confirmation message, nothing else.`;
+
+        const confirmationCompletion = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: confirmationPrompt },
+            { role: "user", content: `Appointment: ${selectedAppointment.summary}, New time: ${formatDateTime(timeResult.newDateTime.toISOString())}` }
+          ],
+          temperature: 0.3,
+          max_tokens: 100
+        });
+        
+        const response = confirmationCompletion.choices[0].message.content.trim();
         
         const workflowData = {
           step: 'confirm_time',
@@ -333,8 +359,63 @@ Respond with ONLY the appointment index (1, 2, etc.) or "unclear" if you can't d
         
         return { response, workflowData };
       } else {
-        // Time parsing failed, ask for new time
-        const response = `Great! I can see you want to delay "${selectedAppointment.summary}" which is currently scheduled for ${formatDateTime(selectedAppointment.start.dateTime)}.\n\nWhat would be the new time?`;
+        // Time parsing failed, ask for new time using LLM for natural conversation
+        let response;
+        if (timeResult.isPartial) {
+          // Use LLM to generate natural clarification questions
+          const clarificationPrompt = `The user said: "${transcript}" when trying to reschedule an appointment.
+
+Generate a natural, conversational response to ask for clarification. Use natural acknowledgments like "Alright," "Perfect," "Thanks for clarifying," "Got it."
+
+Guidelines:
+- If they provided only a date, ask politely for the time
+- If they provided only a time, ask politely for the day  
+- If the request is vague, guide them with options (morning, afternoon, evening)
+- Be conversational and helpful
+- Keep it concise and natural
+
+Respond with just the clarification question, nothing else.`;
+
+          const clarificationCompletion = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+              { role: "system", content: clarificationPrompt },
+              { role: "user", content: `User input: "${transcript}"` }
+            ],
+            temperature: 0.3,
+            max_tokens: 100
+          });
+          
+          response = clarificationCompletion.choices[0].message.content.trim();
+        } else {
+          // Use LLM to generate a natural request for new time
+          const newTimePrompt = `The user wants to reschedule an appointment but the time they provided was unclear.
+
+Appointment: "${selectedAppointment.summary}"
+Current time: ${formatDateTime(selectedAppointment.start.dateTime)}
+
+Generate a natural, conversational response to ask for the new time. Use natural acknowledgments like "Alright," "Perfect," "Thanks for clarifying," "Got it."
+
+Guidelines:
+- Be conversational and helpful
+- Ask for the new time clearly
+- Keep it concise and natural
+- Don't be overly verbose
+
+Respond with just the question, nothing else.`;
+
+          const newTimeCompletion = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+              { role: "system", content: newTimePrompt },
+              { role: "user", content: `Appointment: ${selectedAppointment.summary}` }
+            ],
+            temperature: 0.3,
+            max_tokens: 100
+          });
+          
+          response = newTimeCompletion.choices[0].message.content.trim();
+        }
         
         const workflowData = {
           step: 'get_new_time',
@@ -409,6 +490,8 @@ Important:
 - If they say "25 September", use September 25, 2025
 - Always use 2025 as the year unless specified otherwise
 
+If the input is unclear or incomplete, respond with "unclear" so the system can ask for clarification.
+
 Respond with ONLY the new date and time in ISO format (YYYY-MM-DDTHH:mm:ss) or "unclear" if you can't parse it.`;
 
     const completion = await openai.chat.completions.create({
@@ -426,6 +509,22 @@ Respond with ONLY the new date and time in ISO format (YYYY-MM-DDTHH:mm:ss) or "
     
     if (newTimeStr === 'unclear') {
       console.log(`❌ Time parsing failed for input: "${transcript}"`);
+      
+      // Check if it's a partial input that needs more information
+      const partialTimePatterns = [
+        /^\d{1,2}$/,  // Just a number like "5"
+        /^(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/i,  // Just a day
+        /^(january|february|march|april|may|june|july|august|september|october|november|december)$/i,  // Just a month
+        /^\d{1,2}\s*(am|pm)$/i,  // Just time like "5PM"
+        /^(morning|afternoon|evening|night)$/i  // Just time of day
+      ];
+      
+      const isPartialInput = partialTimePatterns.some(pattern => pattern.test(transcript.trim()));
+      
+      if (isPartialInput) {
+        return { success: false, error: 'Partial input - needs more information', isPartial: true };
+      }
+      
       return { success: false, error: 'Time parsing failed' };
     }
     
@@ -436,6 +535,23 @@ Respond with ONLY the new date and time in ISO format (YYYY-MM-DDTHH:mm:ss) or "
     if (isNaN(newDateTime.getTime())) {
       console.log(`❌ Date parsing failed for: "${newTimeStr}"`);
       return { success: false, error: 'Date parsing failed' };
+    }
+    
+    // Validate the parsed date
+    const now = new Date();
+    const oneYearFromNow = new Date(now.getFullYear() + 1, now.getMonth(), now.getDate());
+    
+    // Check if date is in the past (more than 1 hour ago)
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    if (newDateTime < oneHourAgo) {
+      console.log(`⚠️ Date is in the past: ${newDateTime.toISOString()}`);
+      return { success: false, error: 'Date is in the past' };
+    }
+    
+    // Check if date is too far in the future (more than 1 year)
+    if (newDateTime > oneYearFromNow) {
+      console.log(`⚠️ Date is too far in the future: ${newDateTime.toISOString()}`);
+      return { success: false, error: 'Date is too far in the future' };
     }
     
     return { success: true, newDateTime };
@@ -475,6 +591,8 @@ Important:
 - If they say "February" without a day, assume February 25, 2025
 - If they say "25 September", use September 25, 2025
 - Always use 2025 as the year unless specified otherwise
+
+If the input is unclear or incomplete, respond with "unclear" so the system can ask for clarification.
 
 Respond with ONLY the new date and time in ISO format (YYYY-MM-DDTHH:mm:ss) or "unclear" if you can't parse it.`;
 
@@ -697,9 +815,13 @@ async function updateAppointmentWithTime(selectedAppointment, newDateTime, calle
         "I'm checking your calendar to get the latest appointment details"
       ];
       const fetchFiller = fetchFillers[Math.floor(Math.random() * fetchFillers.length)];
-      const fetchFillerPromise = speakFiller(fetchFiller, streamSid, language);
       
-      const appointments = await googleCalendarService.getAppointments(callerInfo);
+      // Start filler immediately and run calendar fetch in parallel
+      const fetchFillerPromise = speakFiller(fetchFiller, streamSid, language);
+      const appointmentsPromise = googleCalendarService.getAppointments(callerInfo);
+      
+      // Wait for both to complete
+      const appointments = await appointmentsPromise;
       
       // Ask for more help instead of ending call immediately
       return handlePostUpdateFlow(selectedAppointment, newDateTime, callerInfo, language, streamSid, appointments);

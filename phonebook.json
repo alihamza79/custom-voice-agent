@@ -3,6 +3,12 @@
     "name": "Arman",
     "type": "teammate"
   },
+  "+4981424634019": {
+    "name": "Hassan",
+    "type": "Primary Contact",
+    "Primary_contact":"Arman"
+  },
+
   "+1987654321": {
     "name": "Sarah Johnson", 
     "type": "boss"
