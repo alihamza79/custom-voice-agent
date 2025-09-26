@@ -8,6 +8,7 @@ const googleCalendarService = require('../../services/googleCalendarService');
 const calendarPreloader = require('../../services/calendarPreloader');
 const { delayNotificationWorkflow } = require('../../workflows/TeamDelayWorkflow');
 const teamAnnouncementWorkflow = require('../../workflows/TeamAnnouncementWorkflow');
+const fillerAudioService = require('../../services/fillerAudioService');
 
 const openai = new OpenAI();
 
@@ -403,31 +404,43 @@ Classify this into one of the 5 categories.`;
         // Start filler speaking in parallel (don't await it)
         const fillerPromise = (async () => {
           try {
-            const { getCurrentMediaStream } = require('../../server');
-            const mediaStream = getCurrentMediaStream();
+            globalTimingLogger.startOperation('Filler Audio');
             
-            if (mediaStream) {
-              globalTimingLogger.startOperation('Filler TTS');
+            // Try to use pre-recorded audio first (0ms delay)
+            const audioPlayed = await fillerAudioService.playFillerAudio(
+              immediateResponse, 
+              state.streamSid, 
+              state.language || 'english'
+            );
+            
+            if (!audioPlayed) {
+              // Fallback to Azure TTS if no pre-recorded audio available
+              console.log('🔄 Fallback to Azure TTS for filler');
+              const { getCurrentMediaStream } = require('../../server');
+              const mediaStream = getCurrentMediaStream();
               
-              // Set up mediaStream for TTS
-              mediaStream.speaking = true;
-              mediaStream.ttsStart = Date.now();
-              mediaStream.firstByte = true;
-              mediaStream.currentMediaStream = mediaStream;
-              
-              // Speak the generic filler immediately
-              const azureTTSService = require('../../services/azureTTSService');
-              await azureTTSService.synthesizeStreaming(
-                immediateResponse,
-                mediaStream,
-                state.language || 'english'
-              );
-              globalTimingLogger.endOperation('Filler TTS');
-            } else {
-              globalTimingLogger.logError(new Error('No mediaStream available'), 'Filler TTS');
+              if (mediaStream) {
+                // Set up mediaStream for TTS
+                mediaStream.speaking = true;
+                mediaStream.ttsStart = Date.now();
+                mediaStream.firstByte = true;
+                mediaStream.currentMediaStream = mediaStream;
+                
+                // Speak the generic filler immediately
+                const azureTTSService = require('../../services/azureTTSService');
+                await azureTTSService.synthesizeStreaming(
+                  immediateResponse,
+                  mediaStream,
+                  state.language || 'english'
+                );
+              } else {
+                globalTimingLogger.logError(new Error('No mediaStream available'), 'Filler TTS');
+              }
             }
+            
+            globalTimingLogger.endOperation('Filler Audio');
           } catch (error) {
-            globalTimingLogger.logError(error, 'Filler TTS');
+            globalTimingLogger.logError(error, 'Filler Audio');
           }
         })();
         
@@ -444,11 +457,18 @@ Classify this into one of the 5 categories.`;
         // Check what calendar ID is being used
         console.log('🔍 DEBUG: Calendar ID being used:', process.env.GOOGLE_CALENDAR_ID || 'primary');
         
-        // Get current appointments for the teammate
-        console.log('🔍 DEBUG: Fetching appointments for callerInfo:', callerInfo);
-        const appointments = await googleCalendarService.getAppointments(callerInfo);
-        console.log('🔍 DEBUG: Retrieved appointments:', appointments?.length || 0, 'appointments');
-        console.log('🔍 DEBUG: Appointments data:', appointments);
+        // OPTIMIZATION: Check if appointments are already cached in session first
+        let appointments;
+        if (session?.preloadedAppointments && session.preloadedAppointments.length > 0) {
+          console.log(`⚡ USING SESSION CACHE: ${session.preloadedAppointments.length} appointments from session cache`);
+          appointments = session.preloadedAppointments;
+        } else {
+          // Get current appointments for the teammate (will use Google Calendar service cache)
+          console.log('🔍 DEBUG: Fetching appointments for callerInfo:', callerInfo);
+          appointments = await googleCalendarService.getAppointments(callerInfo);
+          console.log('🔍 DEBUG: Retrieved appointments:', appointments?.length || 0, 'appointments');
+          console.log('🔍 DEBUG: Appointments data:', appointments);
+        }
         
         // Start delay notification workflow
         const workflowResult = await delayNotificationWorkflow(

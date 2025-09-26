@@ -11,14 +11,14 @@ const requiredEnvVars = {
 
 const optionalEnvVars = {
   OPENAI_MODEL: process.env.OPENAI_MODEL,
-  WEBSOCKET_URL: process.env.WEBSOCKET_URL || "wss://20b73e7298f7.ngrok-free.app/streams",
+  WEBSOCKET_URL: process.env.WEBSOCKET_URL || "wss://5a7f3cfef574.ngrok-free.app/streams",
   TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
   TWILIO_API_KEY_SID: process.env.TWILIO_API_KEY_SID,
   TWILIO_API_KEY_SECRET: process.env.TWILIO_API_KEY_SECRET,
   TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
   TWILIO_PHONE_NUMBER: process.env.TWILIO_PHONE_NUMBER || '+4981424634017',
   TWIML_APP_SID: process.env.TWIML_APP_SID,
-  BASE_URL: process.env.BASE_URL || "https://20b73e7298f7.ngrok-free.app",
+  BASE_URL: process.env.BASE_URL || "https://5a7f3cfef574.ngrok-free.app",
   // SMS Configuration
   SMS_PHONE_NUMBER: process.env.SMS_PHONE_NUMBER || '+4915888648880',
   TEAMMATE_PHONE_NUMBER: process.env.TEAMMATE_PHONE_NUMBER || '+491726073488',

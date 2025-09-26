@@ -17,7 +17,7 @@ class GoogleCalendarService {
 
     // Caching for performance
     this.appointmentCache = new Map();
-    this.cacheExpiry = 30 * 1000; // 30 seconds cache
+    this.cacheExpiry = 5 * 60 * 1000; // 5 minutes cache (increased from 30 seconds)
     this.lastCacheUpdate = 0;
 
     // Calendar ID - using Calendar_Agent calendar instead of service account's primary
@@ -71,7 +71,9 @@ class GoogleCalendarService {
     const timer = createAppointmentTimer(`calendar_${callerInfo.phoneNumber}`);
     timer.checkpoint('calendar_service_start', 'Starting Google Calendar service request', { forceRefresh });
     
-    const cacheKey = `${callerInfo.phoneNumber}_${callerInfo.name}`;
+    // FIXED: Use only phone number for cache key to ensure consistency
+    // This prevents cache misses when callerInfo.name differs between calls
+    const cacheKey = callerInfo.phoneNumber;
     const now = Date.now();
 
     timer.checkpoint('cache_check_start', 'Checking appointment cache');
@@ -80,8 +82,10 @@ class GoogleCalendarService {
       const cached = this.appointmentCache.get(cacheKey);
       if (now - cached.timestamp < this.cacheExpiry) {
         timer.checkpoint('cache_hit', 'Using cached calendar data', { age: now - cached.timestamp });
-        console.log(`⚡ GOOGLE CACHE HIT: ${cached.data?.length || 0} appointments from cache`);
+        console.log(`⚡ GOOGLE CACHE HIT: ${cached.data?.length || 0} appointments from cache for ${callerInfo.phoneNumber}`);
         return cached.data;
+      } else {
+        console.log(`⏰ CACHE EXPIRED: Cache age ${now - cached.timestamp}ms exceeds TTL ${this.cacheExpiry}ms`);
       }
     }
     timer.checkpoint('cache_miss', 'Cache miss or force refresh, fetching fresh data');

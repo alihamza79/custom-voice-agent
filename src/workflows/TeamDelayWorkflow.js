@@ -8,31 +8,43 @@ const databaseConnection = require('../services/databaseConnection');
 const callTerminationService = require('../services/callTerminationService');
 const { globalTimingLogger } = require('../utils/timingLogger');
 const performanceLogger = require('../utils/performanceLogger');
+const fillerAudioService = require('../services/fillerAudioService');
 
 const openai = new OpenAI();
 
 // Helper function to speak filler words during long operations
 async function speakFiller(fillerText, streamSid, language = 'english') {
   try {
-    const { getCurrentMediaStream } = require('../server');
-    const mediaStream = getCurrentMediaStream();
+    console.log(`💬 Speaking filler: "${fillerText}"`);
     
-    if (mediaStream) {
-      console.log(`💬 Speaking filler: "${fillerText}"`);
+    // Try to use pre-recorded audio first (0ms delay)
+    const audioPlayed = await fillerAudioService.playFillerAudio(
+      fillerText, 
+      streamSid, 
+      language
+    );
+    
+    if (!audioPlayed) {
+      // Fallback to Azure TTS if no pre-recorded audio available
+      console.log('🔄 Fallback to Azure TTS for filler');
+      const { getCurrentMediaStream } = require('../server');
+      const mediaStream = getCurrentMediaStream();
       
-      // Set up mediaStream for TTS
-      mediaStream.speaking = true;
-      mediaStream.ttsStart = Date.now();
-      mediaStream.firstByte = true;
-      mediaStream.currentMediaStream = mediaStream;
-      
-      // Speak the filler
-      const azureTTSService = require('../services/azureTTSService');
-      await azureTTSService.synthesizeStreaming(
-        fillerText,
-        mediaStream,
-        language
-      );
+      if (mediaStream) {
+        // Set up mediaStream for TTS
+        mediaStream.speaking = true;
+        mediaStream.ttsStart = Date.now();
+        mediaStream.firstByte = true;
+        mediaStream.currentMediaStream = mediaStream;
+        
+        // Speak the filler
+        const azureTTSService = require('../services/azureTTSService');
+        await azureTTSService.synthesizeStreaming(
+          fillerText,
+          mediaStream,
+          language
+        );
+      }
     }
   } catch (error) {
     console.error('❌ Error speaking filler:', error);
@@ -115,6 +127,27 @@ async function delayNotificationWorkflow(callerInfo, transcript, appointments, l
     
     globalTimingLogger.startOperation('Delay Notification Workflow');
     
+    // Check if there are any appointments
+    if (!appointments || appointments.length === 0) {
+      const response = `I can see that you don't have any upcoming appointments scheduled. There's nothing to delay at the moment. Is there anything else I can help you with?`;
+      
+      const workflowData = {
+        step: 'no_appointments',
+        appointments: [],
+        callerInfo: callerInfo,
+        language: language,
+        streamSid: streamSid,
+        shouldEndCall: false
+      };
+      
+      globalTimingLogger.endOperation('Delay Notification Workflow');
+      
+      return {
+        response: response,
+        workflowData: workflowData
+      };
+    }
+    
     // Step 1: Show current appointments to teammate (no greeting since already greeted)
     const appointmentsList = formatAppointmentsForTeammate(appointments);
     const response = `I can see you have the following appointments:\n\n${appointmentsList}\n\nWhich appointment would you like to delay?`;
@@ -182,6 +215,8 @@ async function continueDelayWorkflow(streamSid, transcript, sessionData) {
     
     if (step === 'select_appointment') {
       result = await handleAppointmentSelection(transcript, appointments, callerInfo, language, streamSid);
+    } else if (step === 'no_appointments') {
+      result = await handleNoAppointments(transcript, sessionData, streamSid);
     } else if (step === 'get_new_time') {
       result = await handleNewTimeInput(transcript, sessionData, streamSid);
     } else if (step === 'confirm_time') {
@@ -236,6 +271,64 @@ async function continueDelayWorkflow(streamSid, transcript, sessionData) {
     return {
       response: "I'm having trouble processing your request. Please try again.",
       workflowData: { shouldEndCall: true }
+    };
+  }
+}
+
+// Handle no appointments case
+async function handleNoAppointments(transcript, sessionData, streamSid) {
+  try {
+    const { callerInfo, language } = sessionData;
+    
+    // Check if teammate wants to end the call or needs other help
+    const wantsToEnd = checkEndCallRequest(transcript);
+    
+    if (wantsToEnd === 'yes') {
+      // End the call
+      const response = `Thank you for calling! Since you don't have any appointments to delay, I'll end the call now. Have a great day!`;
+      
+      return {
+        response: response,
+        call_ended: true,
+        workflowData: { shouldEndCall: true }
+      };
+    } else if (wantsToEnd === 'no') {
+      // Continue with other help
+      const response = `I understand you don't have any appointments to delay right now. Is there anything else I can help you with regarding your schedule or team coordination?`;
+      
+      return {
+        response: response,
+        workflowData: { 
+          step: 'no_appointments',
+          appointments: [],
+          callerInfo: callerInfo,
+          language: language,
+          streamSid: streamSid,
+          shouldEndCall: false 
+        }
+      };
+    } else {
+      // Unclear response - ask for clarification
+      const response = `I'm not sure what you'd like to do. Since you don't have any appointments to delay, would you like to end the call or is there something else I can help you with?`;
+      
+      return {
+        response: response,
+        workflowData: { 
+          step: 'no_appointments',
+          appointments: [],
+          callerInfo: callerInfo,
+          language: language,
+          streamSid: streamSid,
+          shouldEndCall: false 
+        }
+      };
+    }
+    
+  } catch (error) {
+    globalTimingLogger.logError(error, 'Handle No Appointments');
+    return {
+      response: "I'm having trouble processing your request. Please try again.",
+      workflowData: { ...sessionData, shouldEndCall: false }
     };
   }
 }

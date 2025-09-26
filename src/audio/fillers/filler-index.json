@@ -1,0 +1,87 @@
+{
+  "generatedAt": "2025-09-26T22:34:16.842Z",
+  "totalFillers": 15,
+  "setupInstructions": {
+    "step1": "Record audio for each filler text using Azure TTS or any TTS service",
+    "step2": "Replace the placeholder .wav files with actual audio files",
+    "step3": "Ensure audio files are in WAV format",
+    "step4": "Test the filler audio service"
+  },
+  "fillers": [
+    {
+      "text": "I'm updating your appointment in the calendar system right now",
+      "filename": "filler_00_im_updating_your_appointment_in_the_calendar_syste.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "Let me save these changes to your Google Calendar",
+      "filename": "filler_01_let_me_save_these_changes_to_your_google_calendar.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "I'm processing the appointment update and confirming the changes",
+      "filename": "filler_02_im_processing_the_appointment_update_and_confirmin.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "Let me update your calendar with the new appointment time",
+      "filename": "filler_03_let_me_update_your_calendar_with_the_new_appointme.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "Let me get your updated calendar and check your appointments",
+      "filename": "filler_04_let_me_get_your_updated_calendar_and_check_your_ap.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "I'm fetching your calendar data to show you the current schedule",
+      "filename": "filler_05_im_fetching_your_calendar_data_to_show_you_the_cur.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "Let me pull up your updated appointments and calendar information",
+      "filename": "filler_06_let_me_pull_up_your_updated_appointments_and_calen.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "I'm checking your calendar to get the latest appointment details",
+      "filename": "filler_07_im_checking_your_calendar_to_get_the_latest_appoin.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "Let me pull up your appointments and check your current schedule",
+      "filename": "filler_08_let_me_pull_up_your_appointments_and_check_your_cu.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "I'm checking your calendar and looking at your meetings right now",
+      "filename": "filler_09_im_checking_your_calendar_and_looking_at_your_meet.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "Let me see what meetings you have and review your schedule",
+      "filename": "filler_10_let_me_see_what_meetings_you_have_and_review_your_.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "I'm looking up your meetings and fetching your calendar information",
+      "filename": "filler_11_im_looking_up_your_meetings_and_fetching_your_cale.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "Let me access your calendar and pull up all your appointments",
+      "filename": "filler_12_let_me_access_your_calendar_and_pull_up_all_your_a.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "I'm checking your schedule and reviewing your upcoming meetings",
+      "filename": "filler_13_im_checking_your_schedule_and_reviewing_your_upcom.wav",
+      "status": "placeholder"
+    },
+    {
+      "text": "Let me fetch your calendar data and see what appointments you have",
+      "filename": "filler_14_let_me_fetch_your_calendar_data_and_see_what_appoi.wav",
+      "status": "placeholder"
+    }
+  ]
+}

@@ -185,6 +185,12 @@ class SessionManager {
     this.scheduleCleanup(streamSid);
   }
   
+  // Get cached appointments for session
+  getCachedAppointments(streamSid) {
+    const session = this.getSession(streamSid);
+    return session?.preloadedAppointments || null;
+  }
+  
   // Update session with partial data
   updateSession(streamSid, updates) {
     const session = this.getSession(streamSid);

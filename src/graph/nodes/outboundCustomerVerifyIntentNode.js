@@ -407,16 +407,16 @@ Classify this into one of the 5 categories.`;
         // INTELLIGENT GENERIC FILLER: Send appropriate filler based on intent
         // Context-based humanistic filler words for appointment confirmation
         const fillers = [
-          "Perfect! Let me confirm that for you",
-          "Great! I'm updating your appointment",
-          "Excellent! Processing your confirmation",
-          "Wonderful! Let me save that change",
-          "Fantastic! I'm confirming your new time",
-          "Perfect! Updating your schedule",
-          "Great! I'm processing your response",
-          "Excellent! Let me confirm that",
-          "Wonderful! Saving your appointment",
-          "Fantastic! I'm updating the calendar"
+          "Perfect! Let me confirm that appointment change for you and update your schedule",
+          "Great! I'm processing your confirmation and updating your calendar right now",
+          "Excellent! I'm saving that change to your appointment and confirming the new time",
+          "Wonderful! Let me update your schedule and process this appointment confirmation",
+          "Fantastic! I'm confirming your new time and updating your calendar information",
+          "Perfect! I'm processing your response and saving the appointment changes",
+          "Great! Let me confirm that for you and update your schedule accordingly",
+          "Excellent! I'm updating your appointment and processing the confirmation",
+          "Wonderful! I'm saving your appointment changes and confirming the new time",
+          "Fantastic! Let me update your calendar and process this confirmation"
         ];
         const immediateResponse = fillers[Math.floor(Math.random() * fillers.length)];
         
@@ -500,16 +500,16 @@ Classify this into one of the 5 categories.`;
         
         // INTELLIGENT GENERIC FILLER: Send appropriate filler for rescheduling
         const fillers = [
-          "I understand you'd like to reschedule",
-          "Let me help you find a better time",
-          "I'll help you reschedule that",
-          "Let me check what times are available",
-          "I'll find you a different time",
-          "Let me look at your options",
-          "I'll help you reschedule",
-          "Let me find alternative times",
-          "I'll check what works better",
-          "Let me help you reschedule"
+          "I understand you'd like to reschedule that appointment and find a better time",
+          "Let me help you find a better time and check what options are available",
+          "I'll help you reschedule that and look for alternative times that work",
+          "Let me check what times are available and find you a different slot",
+          "I'll find you a different time and check your schedule for alternatives",
+          "Let me look at your options and see what other times might work better",
+          "I'll help you reschedule that appointment and find a more suitable time",
+          "Let me find alternative times and check what works better for your schedule",
+          "I'll check what works better and help you find a different appointment time",
+          "Let me help you reschedule and look for times that fit your schedule better"
         ];
         const immediateResponse = fillers[Math.floor(Math.random() * fillers.length)];
         
@@ -576,16 +576,16 @@ Classify this into one of the 5 categories.`;
         
         // INTELLIGENT GENERIC FILLER: Send appropriate filler for decline
         const fillers = [
-          "I understand you can't make it",
-          "Let me help you with that",
-          "I'll take care of canceling that",
-          "Let me update your schedule",
-          "I'll handle the cancellation",
-          "Let me remove that appointment",
-          "I'll cancel that for you",
-          "Let me update your calendar",
-          "I'll take care of that",
-          "Let me handle the cancellation"
+          "I understand you can't make it and I'll help you with canceling that appointment",
+          "Let me help you with that and take care of canceling your appointment",
+          "I'll take care of canceling that appointment and updating your schedule",
+          "Let me update your schedule and handle the cancellation for you",
+          "I'll handle the cancellation and remove that appointment from your calendar",
+          "Let me remove that appointment and update your schedule accordingly",
+          "I'll cancel that appointment for you and update your calendar information",
+          "Let me update your calendar and take care of the cancellation process",
+          "I'll take care of that and handle the appointment cancellation for you",
+          "Let me handle the cancellation and update your schedule with the changes"
         ];
         const immediateResponse = fillers[Math.floor(Math.random() * fillers.length)];
         
