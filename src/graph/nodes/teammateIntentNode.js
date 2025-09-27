@@ -470,13 +470,15 @@ Classify this into one of the 5 categories.`;
           console.log('🔍 DEBUG: Appointments data:', appointments);
         }
         
-        // Start delay notification workflow
+        // Start delay notification workflow with conversation history
+        const conversationHistory = state.conversation_history || [];
         const workflowResult = await delayNotificationWorkflow(
           callerInfo,
           state.transcript,
           appointments,
           state.language || 'english',
-          state.streamSid
+          state.streamSid,
+          conversationHistory
         );
         
         globalTimingLogger.endOperation('Delay Notification Workflow');

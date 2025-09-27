@@ -202,7 +202,7 @@ function isValidTranscript(transcript, confidence = 0) {
   }
   
   // Must have at least 3 real words for a complete thought (unless it's very specific like "yes" or "no")
-  const shortValidResponses = ['yes', 'no', 'okay', 'ok', 'sure', 'thanks', 'thank you', 'goodbye', 'bye', 'hello', 'hi', 'yeah', 'yep', 'nope', 'right', 'correct', 'wrong', 'true', 'false', 'kindly', 'please', 'can', 'you', 'shift', 'change', 'move', 'cancel', 'appointment', 'meeting', 'no bye', 'yes please', 'and let me', 'done', 'time will be same', 'same time', 'keep same time', 'not correct', 'incorrect', 'wrong date', 'wrong time', 'change it', 'different', 'another', 'i want', 'i need', 'i would like', 'can you', 'could you', 'confirmed', 'agreed', 'accepted', 'approved', 'exactly', 'precisely', 'absolutely'];
+  const shortValidResponses = ['yes', 'no', 'okay', 'ok', 'sure', 'thanks', 'thank you', 'goodbye', 'bye', 'hello', 'hi', 'yeah', 'yep', 'nope', 'right', 'correct', 'wrong', 'true', 'false', 'kindly', 'please', 'can', 'you', 'shift', 'change', 'move', 'cancel', 'appointment', 'meeting', 'no bye', 'yes please', 'and let me', 'done', 'time will be same', 'same time', 'keep same time', 'not correct', 'incorrect', 'wrong date', 'wrong time', 'change it', 'different', 'another', 'i want', 'i need', 'i would like', 'can you', 'could you', 'confirmed', 'agreed', 'accepted', 'approved', 'exactly', 'precisely', 'absolutely', 'i have', 'i have a', 'there is', 'there is a', 'pain in', 'headache', 'head pain', 'pain in my', 'i have pain', 'i have a headache', 'i have a pain', 'there is pain', 'there is a pain'];
   
   // CRITICAL: Allow confirmation phrases
   const confirmationPhrases = [
@@ -213,7 +213,11 @@ function isValidTranscript(transcript, confidence = 0) {
     'sure confirm', 'sure please', 'sure do that', 'sure go ahead',
     'okay confirm', 'okay please', 'okay do that', 'okay go ahead',
     'please confirm', 'please do', 'please go', 'please proceed',
-    'kindly confirm', 'kindly do', 'kindly go', 'kindly proceed'
+    'kindly confirm', 'kindly do', 'kindly go', 'kindly proceed',
+    // Medical-related phrases that should be allowed
+    'i have a headache', 'i have pain', 'there is pain', 'i have a pain',
+    'pain in my head', 'head pain', 'i have head pain', 'there is a pain',
+    'i have a headache', 'i have a pain in', 'there is a pain in'
   ];
   
   const isConfirmationPhrase = confirmationPhrases.some(phrase => 
