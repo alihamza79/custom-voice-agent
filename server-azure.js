@@ -958,7 +958,7 @@ dispatcher.onGet("/voice-token", function (req, res) {
  Twilio streams.xml
 */
 dispatcher.onPost("/twiml", function (req, res) {
-  const websocketUrl = process.env.WEBSOCKET_URL || "wss://ef41528ec529.ngrok-free.app/streams";
+  const websocketUrl = process.env.WEBSOCKET_URL; // Must be set in .env
   
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8" ?>
 <Response>

@@ -524,41 +524,47 @@ mediaws.on("connect", function (connection) {
 
 // Start the server
 wsserver.listen(HTTP_SERVER_PORT, async function () {
+  const { WEBSOCKET_URL, BASE_URL } = require('./config/environment');
+  
   console.log("🚀 [SERVER_STARTUP] ==========================================");
   console.log("🚀 [SERVER_STARTUP] 🎉 SERVER STARTED SUCCESSFULLY!");
   console.log("🚀 [SERVER_STARTUP] Timestamp:", new Date().toISOString());
   console.log("🚀 [SERVER_STARTUP] HTTP Server listening on: http://localhost:%s", HTTP_SERVER_PORT);
-  console.log("🚀 [SERVER_STARTUP] WebSocket server should be accessible at: wss://ef41528ec529.ngrok-free.app/streams");
-  console.log("🚀 [SERVER_STARTUP] Base URL: https://ef41528ec529.ngrok-free.app");
-  console.log("🚀 [SERVER_STARTUP] TwiML endpoint: https://ef41528ec529.ngrok-free.app/twiml");
-  console.log("🚀 [SERVER_STARTUP] Status callback: https://ef41528ec529.ngrok-free.app/outbound-websocket-call-status");
+  console.log("🚀 [SERVER_STARTUP] WebSocket server should be accessible at:", WEBSOCKET_URL || 'NOT SET');
+  console.log("🚀 [SERVER_STARTUP] Base URL:", BASE_URL || 'NOT SET');
+  console.log("🚀 [SERVER_STARTUP] TwiML endpoint:", BASE_URL ? `${BASE_URL}/twiml` : 'NOT SET');
+  console.log("🚀 [SERVER_STARTUP] Status callback:", BASE_URL ? `${BASE_URL}/outbound-websocket-call-status` : 'NOT SET');
   console.log("🚀 [SERVER_STARTUP] ==========================================");
   
   // Test WebSocket server accessibility
-  console.log("🧪 [WEBSOCKET_TEST] Testing WebSocket server accessibility...");
-  const WebSocket = require('ws');
-  const testUrl = 'wss://ef41528ec529.ngrok-free.app/streams?streamSid=test_connection&isOutbound=true';
-  console.log("🧪 [WEBSOCKET_TEST] Test URL:", testUrl);
+  if (WEBSOCKET_URL) {
+    console.log("🧪 [WEBSOCKET_TEST] Testing WebSocket server accessibility...");
+    const WebSocket = require('ws');
+    const testUrl = `${WEBSOCKET_URL}?streamSid=test_connection&isOutbound=true`;
+    console.log("🧪 [WEBSOCKET_TEST] Test URL:", testUrl);
   
-  const testWs = new WebSocket(testUrl);
+    const testWs = new WebSocket(testUrl);
   
-  testWs.on('open', function() {
-    console.log("✅ [WEBSOCKET_TEST] WebSocket connection successful!");
-    testWs.close();
-  });
-  
-  testWs.on('error', function(error) {
-    console.log("❌ [WEBSOCKET_TEST] WebSocket connection failed:", error.message);
-    console.log("❌ [WEBSOCKET_TEST] This explains why Twilio cannot connect to the WebSocket server");
-  });
-  
-  // Timeout after 5 seconds
-  setTimeout(() => {
-    if (testWs.readyState === WebSocket.CONNECTING) {
+    testWs.on('open', function() {
+      console.log("✅ [WEBSOCKET_TEST] WebSocket connection successful!");
       testWs.close();
-      console.log("⏰ [WEBSOCKET_TEST] WebSocket connection test timed out");
-    }
-  }, 5000);
+    });
+    
+    testWs.on('error', function(error) {
+      console.log("❌ [WEBSOCKET_TEST] WebSocket connection failed:", error.message);
+      console.log("❌ [WEBSOCKET_TEST] This explains why Twilio cannot connect to the WebSocket server");
+    });
+    
+    // Timeout after 5 seconds
+    setTimeout(() => {
+      if (testWs.readyState === WebSocket.CONNECTING) {
+        testWs.close();
+        console.log("⏰ [WEBSOCKET_TEST] WebSocket connection test timed out");
+      }
+    }, 5000);
+  } else {
+    console.log("⚠️ [WEBSOCKET_TEST] WEBSOCKET_URL not set in .env - skipping test");
+  }
 
   // Initialize Azure TTS streaming at startup
   await azureTTSService.initialize();
