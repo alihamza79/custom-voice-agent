@@ -6,9 +6,13 @@ const performanceLogger = require('../../utils/performanceLogger');
 const sessionManager = require('../../services/sessionManager');
 const googleCalendarService = require('../../services/googleCalendarService');
 const calendarPreloader = require('../../services/calendarPreloader');
-const { delayNotificationWorkflow } = require('../../workflows/TeamDelayWorkflow');
+const { delayNotificationWorkflow } = require('../../workflows/TeamDelayWorkflow'); // OLD - kept for backward compat
+const DelayNotificationWorkflowHandler = require('../../workflows/DelayNotificationWorkflowHandler'); // NEW LangGraph
 const teamAnnouncementWorkflow = require('../../workflows/TeamAnnouncementWorkflow');
 const fillerAudioService = require('../../services/fillerAudioService');
+
+// Initialize the new LangGraph delay notification handler
+const delayNotificationHandler = new DelayNotificationWorkflowHandler();
 
 const openai = new OpenAI();
 
@@ -95,13 +99,32 @@ const teammateIntentNode = RunnableLambda.from(async (state) => {
     
     try {
       globalTimingLogger.startOperation('Continue Workflow');
-      const { continueDelayWorkflow } = require('../../workflows/TeamDelayWorkflow');
-      const workflowData = session.langChainSession.workflowData || {};
-      const workflowResult = await continueDelayWorkflow(
-        state.streamSid,
-        state.transcript,
-        workflowData
-      );
+      
+      let workflowResult;
+      
+      // Check which workflow type is active
+      if (session.langChainSession.workflowType === 'delay_notification') {
+        // NEW LangGraph delay notification workflow
+        console.log('🔄 Continuing NEW LangGraph delay notification workflow');
+        const delayHandler = new DelayNotificationWorkflowHandler();
+        workflowResult = await delayHandler.continueWorkflow(
+          state.streamSid,
+          state.transcript
+        );
+      } else if (session.langChainSession.handler === 'delayNotificationWorkflow') {
+        // OLD delay workflow (backward compatibility)
+        console.log('🔄 Continuing OLD delay notification workflow');
+        const { continueDelayWorkflow } = require('../../workflows/TeamDelayWorkflow');
+        let workflowDataFromSession = session.langChainSession.workflowData || {};
+        workflowResult = await continueDelayWorkflow(
+          state.streamSid,
+          state.transcript,
+          workflowDataFromSession
+        );
+      } else {
+        // Unknown workflow type
+        throw new Error(`Unknown workflow type: ${session.langChainSession.workflowType}`);
+      }
       globalTimingLogger.endOperation('Continue Workflow');
       
       // Handle workflow result
@@ -460,26 +483,22 @@ Classify this into one of the 5 categories.`;
         // Check what calendar ID is being used
         console.log('🔍 DEBUG: Calendar ID being used:', process.env.GOOGLE_CALENDAR_ID || 'primary');
         
-        // OPTIMIZATION: Check if appointments are already cached in session first
-        let appointments;
-        if (session?.preloadedAppointments && session.preloadedAppointments.length > 0) {
-          console.log(`⚡ USING SESSION CACHE: ${session.preloadedAppointments.length} appointments from session cache`);
-          appointments = session.preloadedAppointments;
+        // OPTIMIZATION: Preload appointments in session cache
+        if (!session?.preloadedAppointments || session.preloadedAppointments.length === 0) {
+          console.log('📅 Preloading appointments for delay notification workflow');
+          const appointments = await googleCalendarService.getAppointments(callerInfo);
+          sessionManager.setPreloadedAppointments(state.streamSid, appointments);
+          console.log(`📅 Cached ${appointments?.length || 0} appointments in session`);
         } else {
-          // Get current appointments for the teammate (will use Google Calendar service cache)
-          console.log('🔍 DEBUG: Fetching appointments for callerInfo:', callerInfo);
-          appointments = await googleCalendarService.getAppointments(callerInfo);
-          console.log('🔍 DEBUG: Retrieved appointments:', appointments?.length || 0, 'appointments');
-          console.log('🔍 DEBUG: Appointments data:', appointments);
+          console.log(`⚡ USING SESSION CACHE: ${session.preloadedAppointments.length} appointments already cached`);
         }
         
-        // Start delay notification workflow
-        const workflowResult = await delayNotificationWorkflow(
-          callerInfo,
+        // Start NEW LangGraph delay notification workflow
+        console.log('🚀 Starting LangGraph delay notification workflow');
+        const workflowResult = await delayNotificationHandler.startWorkflow(
+          state.streamSid,
           state.transcript,
-          appointments,
-          state.language || 'english',
-          state.streamSid
+          callerInfo
         );
         
         globalTimingLogger.endOperation('Delay Notification Workflow');
@@ -490,19 +509,9 @@ Classify this into one of the 5 categories.`;
         performanceLogger.startTiming(state.streamSid, 'workflow');
         
         workflowResponse = workflowResult.response;
-        workflowData = workflowResult.workflowData;
+        // Note: LangGraph workflow manages its own session state
         
-        // Set session for continued workflow handling
-        sessionManager.setLangChainSession(state.streamSid, {
-          sessionId: state.session_id,
-          handler: 'delayNotificationWorkflow',
-          sessionActive: true,
-          workflowActive: true,
-          workflowType: 'delay_notification',
-          workflowData: workflowData  // Store the workflow data for continuation
-        });
-        
-        console.log('🧠 Stored workflow data in session:', workflowData);
+        console.log('🧠 LangGraph delay notification workflow started');
         
       } catch (error) {
         globalTimingLogger.logError(error, 'Delay Notification Workflow');

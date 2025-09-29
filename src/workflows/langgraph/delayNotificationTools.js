@@ -1,0 +1,419 @@
+// Delay Notification Tools for LangGraph
+const { DynamicStructuredTool, DynamicTool } = require("@langchain/core/tools");
+const { z } = require("zod");
+const googleCalendarService = require('../../services/googleCalendarService');
+const outboundCallSession = require('../../services/outboundCallSession');
+const smsService = require('../../services/smsService');
+const sessionManager = require('../../services/sessionManager');
+const fillerAudioService = require('../../services/fillerAudioService');
+const { createAppointmentTimer } = require('../../utils/appointmentTimingLogger');
+
+// Helper function to play filler audio before tool execution
+async function playFillerBeforeTool(streamSid, context = 'processing') {
+  const fillers = {
+    processing: ["Let me check that for you", "One moment please", "Just a second"],
+    calling: ["I'm calling them now", "Let me call them", "Calling now"],
+    updating: ["Let me update that", "Updating the appointment", "One moment"],
+    sending: ["I'll send that message", "Sending the update", "Just a moment"]
+  };
+  
+  const fillerList = fillers[context] || fillers.processing;
+  const randomFiller = fillerList[Math.floor(Math.random() * fillerList.length)];
+  
+  try {
+    await fillerAudioService.playFillerAudio(randomFiller, streamSid, 'english');
+  } catch (error) {
+    console.log('⚠️ Filler audio failed, continuing:', error.message);
+  }
+}
+
+// Create tools for delay notification workflow
+async function createDelayNotificationTools(streamSid) {
+  
+  // Tool 1: Extract delay information from teammate's input
+  const extractDelayInfoTool = new DynamicStructuredTool({
+    name: "extract_delay_info",
+    description: "Extract delay details from teammate's message: delay minutes, customer name, and alternative time.",
+    schema: z.object({
+      userInput: z.string().describe("The teammate's full message about the delay"),
+    }),
+    func: async ({ userInput }) => {
+      const timer = createAppointmentTimer(streamSid);
+      timer.checkpoint('extract_delay_info_start', 'Extracting delay information from input');
+      
+      // Play filler before processing
+      await playFillerBeforeTool(streamSid, 'processing');
+      
+      try {
+        const OpenAI = require('openai');
+        const openai = new OpenAI();
+        
+        const systemPrompt = `You are extracting delay notification details from a teammate's message.
+
+Extract the following information:
+1. delay_minutes: How many minutes the teammate is running late (number only)
+2. customer_name: The customer's name (extract just the name, remove titles like Mr./Mrs.)
+3. alternative_time: The alternative time offered (in 24-hour format HH:MM)
+4. alternative_date: If mentioned, the date (YYYY-MM-DD format, default to today if not specified)
+
+Examples:
+- "I'm late by 30 minutes to Mr. Arman, ask if he wants to wait or come at 6 PM"
+  → {"delay_minutes": 30, "customer_name": "Arman", "alternative_time": "18:00", "alternative_date": "today"}
+
+- "Running 15 minutes behind for Sarah, can she wait or reschedule to tomorrow 2 PM?"
+  → {"delay_minutes": 15, "customer_name": "Sarah", "alternative_time": "14:00", "alternative_date": "tomorrow"}
+
+- "I'll be 45 minutes late to Hassan's appointment, offer him 7:30 PM tonight"
+  → {"delay_minutes": 45, "customer_name": "Hassan", "alternative_time": "19:30", "alternative_date": "today"}
+
+CRITICAL RULES:
+- Extract delay_minutes as a NUMBER only
+- Remove titles (Mr., Mrs., Dr.) from customer_name
+- Convert times to 24-hour format (6 PM → 18:00, 2 PM → 14:00)
+- If no alternative time mentioned, return "none"
+- If date is "tomorrow", keep it as "tomorrow", if "today" or not mentioned, use "today"
+
+Respond with ONLY a JSON object.`;
+
+        const completion = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userInput }
+          ],
+          temperature: 0,
+          response_format: { type: "json_object" }
+        });
+        
+        const extracted = JSON.parse(completion.choices[0].message.content);
+        
+        timer.checkpoint('extract_delay_info_complete', 'Successfully extracted delay information', { extracted });
+        
+        return JSON.stringify({
+          success: true,
+          ...extracted
+        });
+      } catch (error) {
+        timer.checkpoint('extract_delay_info_error', 'Error extracting delay information', { error: error.message });
+        return JSON.stringify({
+          success: false,
+          error: error.message
+        });
+      }
+    }
+  });
+
+  // Tool 2: Lookup appointment by customer name
+  const lookupAppointmentTool = new DynamicStructuredTool({
+    name: "lookup_appointment_by_customer",
+    description: "Find the next upcoming appointment for a specific customer by their name.",
+    schema: z.object({
+      customerName: z.string().describe("The customer's name to search for"),
+    }),
+    func: async ({ customerName }) => {
+      const timer = createAppointmentTimer(streamSid);
+      timer.checkpoint('lookup_appointment_start', 'Looking up appointment by customer name', { customerName });
+      
+      // Play filler before fetching
+      await playFillerBeforeTool(streamSid, 'processing');
+      
+      try {
+        const session = sessionManager.getSession(streamSid);
+        let appointments = session?.preloadedAppointments;
+        
+        if (!appointments) {
+          appointments = await googleCalendarService.getAppointments();
+          sessionManager.setPreloadedAppointments(streamSid, appointments);
+        }
+        
+        // Find appointment matching customer name
+        const normalizedSearchName = customerName.toLowerCase().trim();
+        const matchingAppointment = appointments.find(apt => {
+          const aptName = (apt.summary || '').toLowerCase();
+          return aptName.includes(normalizedSearchName) || normalizedSearchName.includes(aptName);
+        });
+        
+        if (matchingAppointment) {
+          timer.checkpoint('lookup_appointment_complete', 'Found matching appointment', { 
+            appointmentId: matchingAppointment.id,
+            summary: matchingAppointment.summary 
+          });
+          
+          return JSON.stringify({
+            success: true,
+            appointment: {
+              id: matchingAppointment.id,
+              summary: matchingAppointment.summary,
+              start: matchingAppointment.start.dateTime,
+              end: matchingAppointment.end.dateTime,
+              customer: customerName
+            }
+          });
+        } else {
+          timer.checkpoint('lookup_appointment_not_found', 'No matching appointment found');
+          return JSON.stringify({
+            success: false,
+            error: `No upcoming appointment found for ${customerName}`
+          });
+        }
+      } catch (error) {
+        timer.checkpoint('lookup_appointment_error', 'Error looking up appointment', { error: error.message });
+        return JSON.stringify({
+          success: false,
+          error: error.message
+        });
+      }
+    }
+  });
+
+  // Tool 3: Calculate wait time (if customer chooses to wait)
+  const calculateWaitTimeTool = new DynamicStructuredTool({
+    name: "calculate_wait_time",
+    description: "Calculate the new appointment time if customer agrees to wait for the delay.",
+    schema: z.object({
+      originalTime: z.string().describe("Original appointment time in ISO format"),
+      delayMinutes: z.number().describe("Number of minutes to delay"),
+    }),
+    func: async ({ originalTime, delayMinutes }) => {
+      try {
+        const original = new Date(originalTime);
+        const newTime = new Date(original.getTime() + (delayMinutes * 60 * 1000));
+        
+        return JSON.stringify({
+          success: true,
+          newTime: newTime.toISOString(),
+          formattedTime: newTime.toLocaleString('en-US', {
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          })
+        });
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: error.message
+        });
+      }
+    }
+  });
+
+  // Tool 4: Make outbound call to customer
+  const makeOutboundCallTool = new DynamicStructuredTool({
+    name: "make_outbound_call",
+    description: "Initiate an outbound call to the customer with the delay options.",
+    schema: z.object({
+      customerName: z.string().describe("Customer's name"),
+      appointmentId: z.string().describe("The appointment ID from lookup_appointment_by_customer tool"),
+      appointmentSummary: z.string().describe("Appointment title/summary"),
+      delayMinutes: z.number().describe("Minutes of delay"),
+      waitOption: z.string().describe("New time if they wait (formatted)"),
+      alternativeOption: z.string().describe("Alternative time offered (formatted)"),
+    }),
+    func: async ({ customerName, appointmentId, appointmentSummary, delayMinutes, waitOption, alternativeOption }) => {
+      const timer = createAppointmentTimer(streamSid);
+      timer.checkpoint('outbound_call_start', 'Initiating outbound call to customer');
+      
+      // Play filler before calling
+      await playFillerBeforeTool(streamSid, 'calling');
+      
+      try {
+        // Get customer phone from phonebook
+        const phonebook = require('../../../phonebook.json');
+        const customerEntry = Object.entries(phonebook).find(([phone, info]) => 
+          info.name.toLowerCase() === customerName.toLowerCase() && info.type === 'customer'
+        );
+        
+        if (!customerEntry) {
+          return JSON.stringify({
+            success: false,
+            error: `Customer ${customerName} not found in phonebook`
+          });
+        }
+        
+        const [customerPhone] = customerEntry;
+        
+        // Prepare delay data for storage
+        const delayData = {
+          customerPhone,
+          customerName,
+          appointmentId, // Include appointment ID for calendar updates
+          appointmentSummary,
+          delayMinutes,
+          waitOption,
+          alternativeOption,
+          status: 'calling',
+          teammateStreamSid: streamSid // Reference back to teammate session
+        };
+        
+        // Store call data in teammate session
+        sessionManager.setDelayCallData(streamSid, delayData);
+        
+        // Make the outbound call
+        const callResult = await outboundCallSession.makeCallToCustomer(
+          customerPhone,
+          { summary: appointmentSummary },
+          alternativeOption
+        );
+        
+        // CRITICAL: Map CallSid to delay data so TwiML generation can find it
+        sessionManager.setCallSidToDelayData(callResult.callSid, delayData);
+        
+        timer.checkpoint('outbound_call_complete', 'Outbound call initiated', { callSid: callResult.callSid });
+        
+        return JSON.stringify({
+          success: true,
+          callSid: callResult.callSid,
+          message: `Calling ${customerName} now to present the options`
+        });
+      } catch (error) {
+        timer.checkpoint('outbound_call_error', 'Error making outbound call', { error: error.message });
+        return JSON.stringify({
+          success: false,
+          error: error.message
+        });
+      }
+    }
+  });
+
+  // Tool 5: Update appointment with new time
+  const updateAppointmentTool = new DynamicStructuredTool({
+    name: "update_appointment_time",
+    description: "Update the appointment in the calendar with the new agreed time.",
+    schema: z.object({
+      appointmentId: z.string().describe("The appointment ID to update"),
+      newStartTime: z.string().describe("New start time in ISO format"),
+      customerChoice: z.string().describe("Which option customer chose: 'wait' or 'alternative'"),
+    }),
+    func: async ({ appointmentId, newStartTime, customerChoice }) => {
+      const timer = createAppointmentTimer(streamSid);
+      timer.checkpoint('update_appointment_start', 'Updating appointment time');
+      
+      // Play filler before updating
+      await playFillerBeforeTool(streamSid, 'updating');
+      
+      try {
+        // Get original appointment to calculate duration
+        const appointments = await googleCalendarService.getAppointments();
+        const appointment = appointments.find(apt => apt.id === appointmentId);
+        
+        if (!appointment) {
+          return JSON.stringify({
+            success: false,
+            error: 'Appointment not found'
+          });
+        }
+        
+        // Calculate duration
+        const originalStart = new Date(appointment.start.dateTime);
+        const originalEnd = new Date(appointment.end.dateTime);
+        const duration = originalEnd.getTime() - originalStart.getTime();
+        
+        const newStart = new Date(newStartTime);
+        const newEnd = new Date(newStart.getTime() + duration);
+        
+        // Update appointment
+        const updateData = {
+          start: {
+            dateTime: newStart.toISOString(),
+            timeZone: appointment.start.timeZone || 'UTC'
+          },
+          end: {
+            dateTime: newEnd.toISOString(),
+            timeZone: appointment.end.timeZone || 'UTC'
+          }
+        };
+        
+        await googleCalendarService.updateAppointment(appointmentId, updateData);
+        
+        timer.checkpoint('update_appointment_complete', 'Appointment updated successfully');
+        
+        return JSON.stringify({
+          success: true,
+          newTime: newStart.toLocaleString('en-US', {
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          }),
+          customerChoice
+        });
+      } catch (error) {
+        timer.checkpoint('update_appointment_error', 'Error updating appointment', { error: error.message });
+        return JSON.stringify({
+          success: false,
+          error: error.message
+        });
+      }
+    }
+  });
+
+  // Tool 6: Send SMS to teammate with result
+  const sendTeammateSMSTool = new DynamicStructuredTool({
+    name: "send_teammate_sms",
+    description: "Send SMS to teammate with the customer's decision and updated appointment details.",
+    schema: z.object({
+      customerName: z.string().describe("Customer's name"),
+      customerChoice: z.string().describe("What the customer chose: 'wait', 'alternative', or 'neither'"),
+      newTime: z.string().describe("The new appointment time (formatted)"),
+      appointmentSummary: z.string().describe("Appointment title"),
+    }),
+    func: async ({ customerName, customerChoice, newTime, appointmentSummary }) => {
+      const timer = createAppointmentTimer(streamSid);
+      timer.checkpoint('send_sms_start', 'Sending SMS to teammate');
+      
+      // Play filler before sending
+      await playFillerBeforeTool(streamSid, 'sending');
+      
+      try {
+        let message = '';
+        
+        if (customerChoice === 'wait') {
+          message = `✅ ${customerName} agreed to WAIT. "${appointmentSummary}" is now at ${newTime}.`;
+        } else if (customerChoice === 'alternative') {
+          message = `✅ ${customerName} prefers the ALTERNATIVE TIME. "${appointmentSummary}" rescheduled to ${newTime}.`;
+        } else {
+          message = `❌ ${customerName} wants a DIFFERENT TIME for "${appointmentSummary}". Please contact them directly to reschedule.`;
+        }
+        
+        // Get teammate phone from environment or session
+        const session = sessionManager.getSession(streamSid);
+        const teammatePhone = session?.callerInfo?.phoneNumber || process.env.TEAMMATE_PHONE_NUMBER;
+        
+        if (process.env.TWILIO_SMS_ENABLED === 'true' && smsService) {
+          await smsService.sendSMS(teammatePhone, message);
+        } else {
+          console.log('📱 [MOCK SMS]:', message);
+        }
+        
+        timer.checkpoint('send_sms_complete', 'SMS sent to teammate');
+        
+        return JSON.stringify({
+          success: true,
+          message: 'SMS sent to teammate with the update'
+        });
+      } catch (error) {
+        timer.checkpoint('send_sms_error', 'Error sending SMS', { error: error.message });
+        return JSON.stringify({
+          success: false,
+          error: error.message
+        });
+      }
+    }
+  });
+
+  return [
+    extractDelayInfoTool,
+    lookupAppointmentTool,
+    calculateWaitTimeTool,
+    makeOutboundCallTool,
+    updateAppointmentTool,
+    sendTeammateSMSTool
+  ];
+}
+
+module.exports = { createDelayNotificationTools };

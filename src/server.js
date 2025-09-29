@@ -77,6 +77,7 @@ function handleOutboundCallRequest(req, res) {
   const mockReq = {
     method: req.method,
     url: req.url,
+    headers: req.headers || {}, // CRITICAL: Include headers for TwiML generation
     body: {},
     post: {},
     query: {}
@@ -132,7 +133,7 @@ function routeOutboundCall(req, res) {
     outboundCallRoutes.healthCheck(req, res);
   } else if (method === 'POST' && url === '/hangup') {
     outboundCallRoutes.handleCallHangup(req, res);
-  } else if (method === 'POST' && url === '/twiml-outbound-websocket-call') {
+  } else if (method === 'POST' && url === '/outbound-websocket-twiml') {
     outboundWebSocketRoutes.handleWebSocketTwiMLGeneration(req, res);
   } else if (method === 'POST' && url === '/outbound-websocket-call-status') {
     outboundWebSocketRoutes.handleOutboundCallStatus(req, res);

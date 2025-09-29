@@ -1,25 +1,49 @@
 // Outbound WebSocket Routes - Handles TwiML generation for WebSocket-based outbound calls
 const outboundWebSocketService = require('../services/outboundWebSocketService');
+const sessionManager = require('../services/sessionManager');
 const { globalTimingLogger } = require('../utils/timingLogger');
 
 // Generate TwiML for WebSocket-based outbound customer call
 function handleWebSocketTwiMLGeneration(req, res) {
+  // CRITICAL: Log IMMEDIATELY before any other code
+  console.log(`🚨 [TWIML_REQUEST] ==========================================`);
+  console.log(`🚨 [TWIML_REQUEST] /twiml-outbound-websocket-call endpoint HIT!`);
+  console.log(`🚨 [TWIML_REQUEST] Method: ${req.method}`);
+  console.log(`🚨 [TWIML_REQUEST] URL: ${req.url}`);
+  console.log(`🚨 [TWIML_REQUEST] Headers:`, req.headers);
+  console.log(`🚨 [TWIML_REQUEST] Body:`, req.body);
+  
   try {
     globalTimingLogger.startOperation('Generate WebSocket Outbound TwiML');
+    
+    // Extract CallSid from request body (Twilio passes this)
+    const callSid = req.body?.CallSid || req.body?.callSid;
     
     // Extract outbound stream SID from query parameters
     // Manually parse query parameters from URL since req.query might not be available
     const url = new URL(req.url, `http://${req.headers.host}`);
     const outboundStreamSid = url.searchParams.get('streamSid') || 
                              req.body?.Digits?.replace('w', '') || 
+                             callSid || 
                              `outbound_${Date.now()}`;
     
     console.log(`📞 [TWiML_GENERATION] ==========================================`);
-    console.log(`📞 [TWiML_GENERATION] Generating WebSocket TwiML for outbound call: ${outboundStreamSid}`);
+    console.log(`📞 [TWiML_GENERATION] Generating WebSocket TwiML for outbound call`);
+    console.log(`📞 [TWiML_GENERATION] CallSid: ${callSid}`);
+    console.log(`📞 [TWiML_GENERATION] StreamSid: ${outboundStreamSid}`);
     console.log(`📞 [TWiML_GENERATION] Request method: ${req.method}`);
     console.log(`📞 [TWiML_GENERATION] Request URL: ${req.url}`);
     console.log(`📞 [TWiML_GENERATION] Request query:`, req.query);
     console.log(`📞 [TWiML_GENERATION] Request body:`, req.body);
+    
+    // CRITICAL: Check if this is a delay notification call
+    const delayData = callSid ? sessionManager.getDelayDataByCallSid(callSid) : null;
+    
+    if (delayData) {
+      console.log(`📞 [TWiML_GENERATION] ✅ This is a DELAY NOTIFICATION call for customer: ${delayData.customerName}`);
+    } else {
+      console.log(`📞 [TWiML_GENERATION] ℹ️ Regular outbound call (not delay notification)`);
+    }
     
     // Get base URL for WebSocket connection - use the same URL as main server
     console.log(`📞 [TWiML_GENERATION] Loading environment configuration...`);
@@ -33,23 +57,20 @@ function handleWebSocketTwiMLGeneration(req, res) {
       fullStreamUrl: `${websocketUrl}?streamSid=${outboundStreamSid}&isOutbound=true`
     });
     
-    // Generate TwiML that connects to WebSocket (using Parameter elements like regular calls)
+    // Generate TwiML that connects to WebSocket
+    // CRITICAL: Pass CallSid and isDelayNotification flag via Parameters
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
         <Stream url="${websocketUrl}">
-            <Parameter name="callerNumber" value="+923450448426" />
-            <Parameter name="callSid" value="${outboundStreamSid}" />
+            <Parameter name="callerNumber" value="${delayData?.customerPhone || '+unknown'}" />
+            <Parameter name="callSid" value="${callSid || outboundStreamSid}" />
             <Parameter name="streamSid" value="${outboundStreamSid}" />
             <Parameter name="isOutbound" value="true" />
+            <Parameter name="isDelayNotification" value="${delayData ? 'true' : 'false'}" />
+            <Parameter name="customerName" value="${delayData?.customerName || ''}" />
         </Stream>
     </Connect>
-    <Say voice="alice" language="en-US">Hello! This is regarding your appointment. Please hold while I connect you to our system.</Say>
-    <Pause length="2"/>
-    <Say voice="alice" language="en-US">You are now connected. Please speak your response.</Say>
-    <Pause length="30"/>
-    <Say voice="alice" language="en-US">Thank you for your response. We will contact you with the updated appointment details. Goodbye.</Say>
-    <Hangup/>
 </Response>`;
 
     console.log(`📞 Generated TwiML:`, twiml);
@@ -66,15 +87,7 @@ function handleWebSocketTwiMLGeneration(req, res) {
     // Fallback TwiML
     const fallbackTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect>
-        <Stream url="${websocketUrl}">
-            <Parameter name="callerNumber" value="+923450448426" />
-            <Parameter name="callSid" value="${outboundStreamSid}" />
-            <Parameter name="streamSid" value="${outboundStreamSid}" />
-            <Parameter name="isOutbound" value="true" />
-        </Stream>
-    </Connect>
-    <Say voice="alice" language="en-US">Hello! This is regarding your appointment. We need to reschedule it. Is this new time okay with you?</Say>
+    <Say voice="alice" language="en-US">We're sorry, an error occurred. Please try again later. Goodbye.</Say>
     <Hangup/>
 </Response>`;
     

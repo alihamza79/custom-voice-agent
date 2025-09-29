@@ -10,6 +10,7 @@ class SessionManager {
     this.defaultTimeout = 10 * 60 * 1000; // 10 minutes
     this.activeMediaStreams = new Map(); // streamSid → MediaStream
     this.callSidToStreamSid = new Map(); // callSid → streamSid (for tracking ending calls)
+    this.callSidToDelayData = new Map(); // callSid → delayCallData (for outbound delay notifications)
     this.cleanupInterval = null;
     
     // Start periodic cleanup
@@ -25,15 +26,7 @@ class SessionManager {
     const session = this.sessions.get(streamSid);
     this.touchSession(streamSid); // Update last activity
     
-    // DEBUG: Log session retrieval with cache info
-    if (streamSid && streamSid.includes('MZ')) { // Only log for actual calls, not system calls
-      console.log(`🔍 DEBUG sessionManager getSession ${streamSid}:`, {
-        hasLangChainSession: !!session?.langChainSession,
-        workflowActive: session?.langChainSession?.workflowActive,
-        hasCachedAppointments: !!session?.preloadedAppointments,
-        cachedCount: session?.preloadedAppointments?.length || 0
-      });
-    }
+    // Verbose debug disabled for cleaner logs
     
     return session;
   }
@@ -180,12 +173,7 @@ class SessionManager {
   setLangChainSession(streamSid, langChainSessionData) {
     const session = this.getSession(streamSid);
     session.langChainSession = langChainSessionData;
-    console.log(`🧠 Set LangChain session for ${streamSid}:`, langChainSessionData);
-    console.log(`🔍 DEBUG sessionManager: Session after setting langChain:`, {
-      streamSid,
-      hasSession: !!session,
-      langChainSession: session.langChainSession
-    });
+    console.log(`🧠 Set LangChain session for ${streamSid}: ${langChainSessionData.workflowType}`);
   }
   
   // Set immediate callback for session
@@ -216,6 +204,48 @@ class SessionManager {
   getCachedAppointments(streamSid) {
     const session = this.getSession(streamSid);
     return session?.preloadedAppointments || null;
+  }
+  
+  // Set delay call data for outbound call coordination
+  setDelayCallData(streamSid, delayCallData) {
+    const session = this.getSession(streamSid);
+    session.delayCallData = delayCallData;
+    console.log(`📞 Set delay call data for ${streamSid}:`, delayCallData);
+  }
+  
+  // Get delay call data
+  getDelayCallData(streamSid) {
+    const session = this.getSession(streamSid);
+    return session?.delayCallData || null;
+  }
+  
+  // Map CallSid to delay data (for outbound calls to customers)
+  setCallSidToDelayData(callSid, delayCallData) {
+    this.callSidToDelayData.set(callSid, delayCallData);
+    console.log(`📞 Mapped CallSid ${callSid} to delay data:`, {
+      customerName: delayCallData.customerName,
+      hasOptions: !!(delayCallData.waitOption && delayCallData.alternativeOption)
+    });
+  }
+  
+  // Get delay data by CallSid (for TwiML generation)
+  getDelayDataByCallSid(callSid) {
+    const delayData = this.callSidToDelayData.get(callSid);
+    if (delayData) {
+      console.log(`📞 Retrieved delay data for CallSid ${callSid}:`, {
+        customerName: delayData.customerName,
+        appointmentSummary: delayData.appointmentSummary
+      });
+    }
+    return delayData || null;
+  }
+  
+  // Clean up delay data by CallSid
+  clearDelayDataByCallSid(callSid) {
+    const deleted = this.callSidToDelayData.delete(callSid);
+    if (deleted) {
+      console.log(`🧹 Cleared delay data for CallSid ${callSid}`);
+    }
   }
   
   // Update session with partial data

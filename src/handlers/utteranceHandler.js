@@ -40,21 +40,39 @@ async function processUtterance(utterance, mediaStream) {
       // CRITICAL: Check if LangChain workflow is active FIRST
       const session = sessionManager.getSession(mediaStream.streamSid);
       if (session.langChainSession && 
-          session.langChainSession.sessionActive) {
+          (session.langChainSession.sessionActive || session.langChainSession.workflowActive)) {
         
         // Active LangChain workflow - processing with existing session
         
         try {
           globalTimingLogger.startOperation('LangChain Continuation');
           
-          // Get the correct workflow function based on handler type
+          // Get the correct workflow function based on handler type or workflowType
           let workflowResult;
           if (session.langChainSession.handler === 'delayNotificationWorkflow') {
+            // OLD delay workflow (kept for backward compatibility)
             const { continueDelayWorkflow } = require('../workflows/TeamDelayWorkflow');
             workflowResult = await continueDelayWorkflow(
               mediaStream.streamSid,
               utterance,
               session.langChainSession.workflowData
+            );
+          } else if (session.langChainSession.workflowType === 'delay_notification' && 
+                     session.langChainSession.workflowActive) {
+            // NEW LangGraph delay workflow (TEAMMATE side)
+            const DelayNotificationWorkflowHandler = require('../workflows/DelayNotificationWorkflowHandler');
+            const delayHandler = new DelayNotificationWorkflowHandler();
+            workflowResult = await delayHandler.continueWorkflow(
+              mediaStream.streamSid,
+              utterance
+            );
+          } else if (session.langChainSession.workflowType === 'customer_delay_response' && 
+                     session.langChainSession.workflowActive) {
+            // Customer delay response workflow (CUSTOMER side)
+            const customerDelayWorkflow = require('../workflows/CustomerDelayResponseWorkflow');
+            workflowResult = await customerDelayWorkflow.processResponse(
+              mediaStream.streamSid,
+              utterance
             );
           } else {
             // Fallback for other workflow types
@@ -185,14 +203,7 @@ async function processUtterance(utterance, mediaStream) {
       
       // Start TTS immediately when graph resolves
       const ttsPromise = graphPromise.then(async (result) => {
-        console.log('🔍 DEBUG: Graph result received:', {
-          hasResult: !!result,
-          systemPrompt: result?.systemPrompt,
-          call_ended: result?.call_ended,
-          conversation_state: result?.conversation_state,
-          shouldEndCall: result?.workflowData?.shouldEndCall,
-          ttsStarted: ttsStarted
-        });
+        // Verbose debug disabled for cleaner logs
         
         if (result && result.systemPrompt && !ttsStarted) {
           ttsStarted = true;
@@ -241,18 +252,10 @@ async function processUtterance(utterance, mediaStream) {
       
       // 🚀 Don't wait for immediate promise - it has a 5s timeout that blocks STT
       // Just wait for TTS to complete, let immediate promise resolve in background
-      console.log('🔍 DEBUG: About to wait for TTS promise');
+      // Verbose debug disabled for cleaner logs
       await ttsPromise;
-      console.log('🔍 DEBUG: TTS promise completed');
         
-      // Check if call should end
-      console.log('🔍 DEBUG: Checking call termination:', {
-        hasResult: !!actualGraphResult,
-        endCall: actualGraphResult?.endCall,
-        call_ended: actualGraphResult?.call_ended,
-        conversation_state: actualGraphResult?.conversation_state,
-        shouldEndCall: actualGraphResult?.workflowData?.shouldEndCall
-      });
+      // Check if call should end (verbose debug disabled)
       
       // Check for call ending using same logic as customer
       const shouldEndCall = actualGraphResult?.endCall || 

@@ -94,10 +94,13 @@ const customerIntentNode = RunnableLambda.from(async (state) => {
     
     try {
       globalTimingLogger.startOperation('Continue Workflow');
+      
+      // Continue appointment workflow (delay notifications are handled via utteranceHandler)
       const workflowResult = await appointmentHandler.continueWorkflow(
         state.streamSid,
         state.transcript
       );
+      
       globalTimingLogger.endOperation('Continue Workflow');
       
       globalTimingLogger.logModelOutput(workflowResult.response, 'WORKFLOW RESPONSE');

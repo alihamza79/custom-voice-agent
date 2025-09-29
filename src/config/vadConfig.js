@@ -28,8 +28,8 @@ const VAD_CONFIG = {
   },
   
   // Debug Settings
-  enableVADLogging: true,         // Enable detailed VAD logging
-  logLevel: 'info'                // 'debug', 'info', 'warn', 'error'
+  enableVADLogging: false,        // Enable detailed VAD logging (disabled for cleaner logs)
+  logLevel: 'warn'                // 'debug', 'info', 'warn', 'error'
 };
 
 module.exports = {

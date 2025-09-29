@@ -61,9 +61,13 @@ class OutboundCallSession {
         return { success: true, mock: true, callSid: `mock_call_${Date.now()}` };
       }
 
-      // Create TwiML for the call - use ngrok URL for Twilio access
+      // CRITICAL: Use WebSocket-based outbound call (same as appointment workflow)
+      // This uses the real-time conversation system instead of old Record/Transcribe
       const baseUrl = process.env.BASE_URL || process.env.WEBSOCKET_URL?.replace('wss://', 'https://').replace('/streams', '') || 'http://localhost:8080';
-      const twimlUrl = `${baseUrl}/twiml-outbound-customer-confirmation`;
+      const twimlUrl = `${baseUrl}/outbound-websocket-twiml`;
+      
+      console.log(`📞 [DELAY_NOTIFICATION] Initiating WebSocket outbound call to ${customerPhone}`);
+      console.log(`📞 [DELAY_NOTIFICATION] TwiML URL: ${twimlUrl}`);
       
       // Make the actual call
       const call = await this.client.calls.create({
@@ -71,7 +75,7 @@ class OutboundCallSession {
         to: customerPhone,
         from: process.env.TWILIO_PHONE_NUMBER || '+4981424634017',
         method: 'POST',
-        statusCallback: `${baseUrl}/outbound-call-status`,
+        statusCallback: `${baseUrl}/outbound-websocket-call-status`,
         statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
         statusCallbackMethod: 'POST'
       });

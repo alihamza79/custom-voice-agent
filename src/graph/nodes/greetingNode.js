@@ -41,13 +41,43 @@ const greetingNode = RunnableLambda.from(async (state) => {
   
   // CRITICAL FIX: Handle outbound calls
   if (state.callerInfo && state.callerInfo.isOutbound) {
-    console.log('📞 Outbound call detected - generating customer verification greeting');
+    console.log('📞 Outbound call detected');
     
-    // For outbound calls, we don't need to identify the caller
-    // The caller info should already be set by the outbound call service
     const callerInfo = state.callerInfo;
     
-    // Generate appropriate greeting for outbound call
+    // Check if this is a delay notification call
+    if (state.callerInfo.isDelayNotification) {
+      console.log('🎯 [DELAY_NOTIFICATION] Outbound delay notification call - starting customer workflow');
+      
+      // Get delay data by CallSid
+      const delayData = state.callSid ? sessionManager.getDelayDataByCallSid(state.callSid) : null;
+      
+      if (delayData) {
+        console.log('✅ [DELAY_NOTIFICATION] Delay data found, starting customer workflow');
+        
+        // Start customer delay response workflow
+        const customerDelayWorkflow = require('../../workflows/CustomerDelayResponseWorkflow');
+        const workflowResult = await customerDelayWorkflow.startWorkflow(state.streamSid, delayData);
+        
+        console.log('✅ [DELAY_NOTIFICATION] Customer workflow started, greeting:', workflowResult.response);
+        
+        return {
+          ...state,
+          callerInfo: callerInfo,
+          systemPrompt: workflowResult.response,
+          greeting_sent: true,
+          session_initialized: true,
+          conversation_state: 'active',
+          call_ended: false,
+          turn_count: (state.turn_count || 0) + 1
+        };
+      } else {
+        console.error('❌ [DELAY_NOTIFICATION] Delay data not found for CallSid:', state.callSid);
+      }
+    }
+    
+    // Regular outbound call (not delay notification)
+    console.log('📞 Regular outbound call - generating customer verification greeting');
     const greeting = "Hello! This is regarding your appointment. Please hold while I connect you to our system.";
     
     return {

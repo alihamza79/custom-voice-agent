@@ -148,14 +148,16 @@ class MediaStream {
       this.threadId = this.streamSid || `thread_${Date.now()}`;
     }
     
-    // Use correct streamSid for outbound calls
-    const sessionStreamSid = this.isOutboundCall ? this.outboundStreamSid : this.threadId;
+    // CRITICAL FIX: For delay notifications, use the real Twilio streamSid, not CallSid
+    // The session was created with this.streamSid, so we must use the same for greeting
+    const sessionStreamSid = this.streamSid || this.threadId;
     
     console.log('📞 [SEND_GREETING] Calling graph system with:', {
       isOutboundCall: this.isOutboundCall,
       sessionStreamSid: sessionStreamSid,
       callerNumber: this.callerNumber,
-      callSid: this.callSid
+      callSid: this.callSid,
+      isDelayNotification: this.isDelayNotification
     });
     
     // Import router here to avoid circular dependencies
@@ -281,10 +283,15 @@ class MediaStream {
             if (data.start.customParameters.isOutbound === 'true') {
               this.isOutboundCall = true;
               this.outboundStreamSid = data.start.customParameters.streamSid;
+              this.isDelayNotification = data.start.customParameters.isDelayNotification === 'true';
+              this.customerName = data.start.customParameters.customerName || null;
+              
               console.log('📞 [MEDIASTREAM] Outbound call detected:', {
                 streamSid: this.outboundStreamSid,
                 callerNumber: this.callerNumber,
-                isOutbound: this.isOutboundCall
+                isOutbound: this.isOutboundCall,
+                isDelayNotification: this.isDelayNotification,
+                customerName: this.customerName
               });
             }
           }
@@ -304,8 +311,9 @@ class MediaStream {
             console.warn('⚠️ TTS prewarming failed on call start:', error.message);
           });
           
-          // Use outbound streamSid if this is an outbound call, otherwise use regular streamSid
-          const sessionStreamSid = this.isOutboundCall ? this.outboundStreamSid : this.streamSid;
+          // CRITICAL FIX: For delay notifications, use the REAL Twilio streamSid, not CallSid
+          // We need to copy the delay data from CallSid session to the real streamSid session
+          const sessionStreamSid = this.streamSid; // Always use real Twilio streamSid
           
           // Initialize global language state for this call
           languageStateService.initializeCall(sessionStreamSid, 'english');
@@ -325,9 +333,24 @@ class MediaStream {
             if (this.isOutboundCall) {
               callerInfo.isOutbound = true;
               callerInfo.outboundStreamSid = this.outboundStreamSid;
+              callerInfo.isDelayNotification = this.isDelayNotification || false;
               callerInfo.type = 'customer';
-              callerInfo.name = 'Customer';
-              console.log('📞 [MEDIASTREAM] Setting outbound caller info:', callerInfo);
+              callerInfo.name = this.customerName || 'Customer';
+              console.log('📞 [MEDIASTREAM] Setting outbound caller info:', {
+                ...callerInfo,
+                isDelayNotification: callerInfo.isDelayNotification
+              });
+              
+              // CRITICAL: For delay notifications, copy the LangChain session from CallSid to real streamSid
+              if (this.isDelayNotification && this.callSid) {
+                console.log('🔄 [DELAY_NOTIFICATION] Copying delay session from CallSid to streamSid');
+                const delayData = sessionManager.getDelayDataByCallSid(this.callSid);
+                if (delayData) {
+                  console.log('✅ [DELAY_NOTIFICATION] Found delay data, will transfer to new streamSid');
+                  // The greeting will be handled by greetingNode, and it will set up the session
+                  // We just need to ensure the callerInfo has the delay notification flag
+                }
+              }
             }
             
             sessionManager.setCallerInfo(sessionStreamSid, callerInfo);
