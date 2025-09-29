@@ -49,11 +49,23 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
     }
   });
 
-  // Add Voice Activity Detection listeners
+  // Add Voice Activity Detection listeners with better filtering
   deepgram.addListener(LiveTranscriptionEvents.SpeechStarted, () => {
     globalTimingLogger.logMoment('Speech activity detected');
-    // Notify VAD service of speech activity
-    vadService.onSpeechStarted(mediaStream.streamSid);
+    
+    // Add debouncing to prevent false positives from background noise
+    const now = Date.now();
+    const lastSpeechTime = deepgram._lastSpeechTime || 0;
+    const timeSinceLastSpeech = now - lastSpeechTime;
+    
+    // Only trigger if enough time has passed since last speech (debouncing)
+    if (timeSinceLastSpeech > 200) { // 200ms debounce
+      deepgram._lastSpeechTime = now;
+      // Notify VAD service of speech activity
+      vadService.onSpeechStarted(mediaStream.streamSid);
+    } else {
+      console.log(`🗣️ VAD: Ignoring speech event - too soon after last speech (${timeSinceLastSpeech}ms)`);
+    }
   });
 
   // Add Speech Ended listener for silence detection

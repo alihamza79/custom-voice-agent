@@ -53,8 +53,8 @@ class DeepgramSTTService {
         // ENHANCED: Better speech detection settings for natural conversation
         no_delay: true,
         interim_results: true,
-        endpointing: 300, // Slightly increased for better speech detection
-        utterance_end_ms: 1000, // Increased to 2 seconds - wait longer for complete thoughts
+        endpointing: 500, // Increased for better speech detection - reduce false positives
+        utterance_end_ms: 1500, // Increased to 1.5 seconds - wait longer for complete thoughts
         vad_events: true, // Enable Voice Activity Detection events
         
         // ENHANCED: Noise filtering

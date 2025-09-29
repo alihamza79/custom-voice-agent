@@ -447,8 +447,11 @@ Classify this into one of the 5 categories.`;
         // Don't await fillerPromise - let it run in parallel
         globalTimingLogger.logMoment('Filler started in parallel - continuing with delay workflow');
         
-        // Small delay to ensure filler starts first
-        await new Promise(resolve => setTimeout(resolve, 50));
+        // Set a flag to prevent VAD interference during main response
+        const mainResponseSession = sessionManager.getSession(state.streamSid);
+        if (mainResponseSession) {
+          mainResponseSession.playingMainResponse = true;
+        }
 
         // Check Google Calendar service health first
         const healthCheck = await googleCalendarService.healthCheck();
@@ -470,15 +473,13 @@ Classify this into one of the 5 categories.`;
           console.log('🔍 DEBUG: Appointments data:', appointments);
         }
         
-        // Start delay notification workflow with conversation history
-        const conversationHistory = state.conversation_history || [];
+        // Start delay notification workflow
         const workflowResult = await delayNotificationWorkflow(
           callerInfo,
           state.transcript,
           appointments,
           state.language || 'english',
-          state.streamSid,
-          conversationHistory
+          state.streamSid
         );
         
         globalTimingLogger.endOperation('Delay Notification Workflow');
@@ -569,8 +570,18 @@ Classify this into one of the 5 categories.`;
       turn_count: (state.turn_count || 0) + 1,
       conversation_state: shouldEndCall ? 'ended' : 
                          (classifiedIntent === 'delay_notification' ? 'workflow' : 'active'),
-      session_initialized: true
+      session_initialized: true,
+      ttsStarted: true // Flag to indicate TTS should start
     };
+    
+    // Clear the main response flag after a delay to allow TTS to complete
+    setTimeout(() => {
+      const currentSession = sessionManager.getSession(state.streamSid);
+      if (currentSession) {
+        currentSession.playingMainResponse = false;
+        console.log('🔓 VAD: Cleared main response flag - VAD re-enabled');
+      }
+    }, 5000); // 5 seconds should be enough for most responses
     
     globalTimingLogger.endOperation('Teammate Intent Classification');
     globalTimingLogger.logModelOutput(workflowResponse, 'FINAL RESPONSE');

@@ -46,6 +46,16 @@ class VADService {
     const state = this.silenceStates.get(streamSid);
     if (!state) return;
 
+    // Check if we're playing main response - ignore VAD during this time
+    const sessionManager = require('./sessionManager');
+    const session = sessionManager.getSession(streamSid);
+    if (session && session.playingMainResponse) {
+      if (this.config.enableVADLogging) {
+        console.log(`🗣️ VAD: Ignoring speech activity - main response playing for ${streamSid.substring(0, 8)}`);
+      }
+      return;
+    }
+
     if (this.config.enableVADLogging) {
       console.log(`🗣️ VAD: Speech activity detected for ${streamSid.substring(0, 8)}`);
     }
