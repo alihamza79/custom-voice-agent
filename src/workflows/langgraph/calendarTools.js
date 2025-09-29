@@ -131,15 +131,62 @@ async function createCalendarTools(streamSid) {
         timer.checkpoint('appointment_found', 'Appointment found', { appointmentId: appointment.id });
 
         timer.checkpoint('time_calculation_start', 'Calculating new appointment times');
+        
+        // CRITICAL FIX: Extract timezone from the dateTime string itself
+        // Google Calendar stores timezone info in both places, need to use the actual offset
+        const dateTimeStr = appointment.start.dateTime;
+        let originalTimeZone = 'UTC';
+        
+        // Extract timezone from datetime string (e.g., "2025-10-14T19:00:00+05:00")
+        const timezoneMatch = dateTimeStr.match(/([+-]\d{2}:\d{2})$/);
+        if (timezoneMatch) {
+          // Has explicit offset - this is the actual timezone being used
+          const offset = timezoneMatch[1];
+          // Convert offset to timezone name (Pakistan is +05:00 = Asia/Karachi)
+          if (offset === '+05:00') {
+            originalTimeZone = 'Asia/Karachi';
+          } else {
+            // For other offsets, keep as UTC and let Google handle it
+            originalTimeZone = appointment.start.timeZone || appointment.end.timeZone || 'UTC';
+          }
+        } else if (appointment.start.timeZone) {
+          originalTimeZone = appointment.start.timeZone;
+        }
+        
+        console.log('🕐 TIMEZONE PRESERVATION:', {
+          originalTimeZone,
+          originalStartDateTime: appointment.start.dateTime,
+          extractedOffset: timezoneMatch ? timezoneMatch[1] : 'none',
+          newDateTime,
+          willPreserveTimezone: true
+        });
+        
         // Calculate end time (assume 1 hour duration if not specified)
         const startTime = new Date(newDateTime);
         const endTime = new Date(startTime.getTime() + 60 * 60 * 1000); // +1 hour
 
+        // FIXED: Preserve original timezone to prevent Google Calendar from converting
         const updateData = {
-          start: { dateTime: newDateTime },
-          end: { dateTime: endTime.toISOString() }
+          start: { 
+            dateTime: newDateTime,
+            timeZone: originalTimeZone  // Use original appointment's timezone
+          },
+          end: { 
+            dateTime: endTime.toISOString(),
+            timeZone: originalTimeZone  // Use original appointment's timezone
+          }
         };
         timer.checkpoint('time_calculation_complete', 'New times calculated');
+
+        // DEBUG: Log the updateData being sent to Google Calendar
+        console.log('🕐 GOOGLE CALENDAR UPDATE DEBUG:', {
+          appointmentId: appointment.id,
+          originalStart: appointment.start,
+          originalEnd: appointment.end,
+          newStart: updateData.start,
+          newEnd: updateData.end,
+          updateData: JSON.stringify(updateData, null, 2)
+        });
 
         timer.checkpoint('calendar_update_start', 'Updating appointment in Google Calendar');
         const calendarService = require('../../services/googleCalendarService');
@@ -147,15 +194,31 @@ async function createCalendarTools(streamSid) {
         timer.checkpoint('calendar_update_complete', 'Google Calendar updated successfully');
         
         timer.checkpoint('format_response_start', 'Formatting success response');
-        const dateStr = startTime.toLocaleDateString('en-US', {
+        
+        // DEBUG: Log the time conversion issue
+        console.log('🕐 TIME DEBUG:', {
+          originalDateTime: newDateTime,
+          originalTimeZone,
+          startTimeUTC: startTime.toISOString(),
+          startTimeLocal: startTime.toString(),
+          timezoneOffset: startTime.getTimezoneOffset()
+        });
+        
+        // Use the original timezone for display to match what Google Calendar shows
+        const originalDate = new Date(newDateTime);
+        const dateStr = originalDate.toLocaleDateString('en-US', {
           weekday: 'long',
           year: 'numeric',
           month: 'long',
-          day: 'numeric'
+          day: 'numeric',
+          timeZone: originalTimeZone // Use original timezone for consistency
         });
-        const timeStr = startTime.toLocaleTimeString([], { 
+        
+        // Use toLocaleTimeString with the original timezone for consistency
+        const timeStr = originalDate.toLocaleTimeString('en-US', { 
           hour: '2-digit', 
-          minute: '2-digit' 
+          minute: '2-digit',
+          timeZone: originalTimeZone // Use original timezone for consistency
         });
         timer.checkpoint('format_response_complete', 'Response formatted');
 

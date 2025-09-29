@@ -181,7 +181,7 @@ Classify this into one of the 4 categories.`;
       shouldTransferCall = true;
       
       // Log the transfer request
-      console.log('📞 [POTENTIAL_CLIENT] Free capacity inquiry detected - initiating transfer to +923450448426');
+      console.log('📞 [POTENTIAL_CLIENT] Free capacity inquiry detected - initiating transfer to +923168564239');
       
       // Send immediate feedback to reduce perceived delay
       if (state.streamSid) {
@@ -222,7 +222,7 @@ Classify this into one of the 4 categories.`;
             console.log('📞 [POTENTIAL_CLIENT] Executing call transfer after TTS completion...');
             const transferResult = await callTransferService.transferCall(
               state.callSid,
-              '+923450448426',
+              '+923168564239',
               `Potential client inquiry - ${classifiedIntent}`
             );
             
@@ -238,7 +238,7 @@ Classify this into one of the 4 categories.`;
         
       } catch (transferError) {
         console.error('❌ [POTENTIAL_CLIENT] Call transfer setup failed:', transferError);
-        workflowResponse = `${workflowResponse} I'm having trouble transferring your call. Please call us directly at +923450448426.`;
+        workflowResponse = `${workflowResponse} I'm having trouble transferring your call. Please call us directly at +923168564239.`;
       }
     }
     
@@ -279,7 +279,7 @@ Classify this into one of the 4 categories.`;
     globalTimingLogger.endOperation('Potential Client Intent Classification');
     
     const conversation_history = [...(state.conversation_history || [])];
-    const errorResponse = "Thank you for calling! I'm having some technical difficulties. Please call us directly at +923450448426 for assistance.";
+    const errorResponse = "Thank you for calling! I'm having some technical difficulties. Please call us directly at +923168564239 for assistance.";
     
     conversation_history.push({
       role: 'assistant',

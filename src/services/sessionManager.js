@@ -9,6 +9,7 @@ class SessionManager {
     this.sessionTimeouts = new Map(); // streamSid → timeoutId
     this.defaultTimeout = 10 * 60 * 1000; // 10 minutes
     this.activeMediaStreams = new Map(); // streamSid → MediaStream
+    this.callSidToStreamSid = new Map(); // callSid → streamSid (for tracking ending calls)
     this.cleanupInterval = null;
     
     // Start periodic cleanup
@@ -77,7 +78,9 @@ class SessionManager {
       // Session metadata
       createdAt: Date.now(),
       lastActivity: Date.now(),
-      isActive: true
+      isActive: true,
+      isEnding: false, // Track if call is in process of ending
+      callSid: null // Track Twilio CallSid for this session
     };
     
     this.sessions.set(streamSid, session);
@@ -85,6 +88,25 @@ class SessionManager {
     
     globalTimingLogger.logMoment(`Session created: ${streamSid}`);
     return session;
+  }
+  
+  // Get session by CallSid (for preventing reconnection)
+  getSessionByCallSid(callSid) {
+    const streamSid = this.callSidToStreamSid.get(callSid);
+    if (streamSid) {
+      return this.sessions.get(streamSid);
+    }
+    return null;
+  }
+  
+  // Set CallSid for a session (called when callerInfo is set)
+  setCallSid(streamSid, callSid) {
+    const session = this.sessions.get(streamSid);
+    if (session && callSid) {
+      session.callSid = callSid;
+      this.callSidToStreamSid.set(callSid, streamSid);
+      console.log(`📞 Mapped CallSid ${callSid} to StreamSid ${streamSid}`);
+    }
   }
   
   // Update session activity and reset timeout
@@ -112,6 +134,11 @@ class SessionManager {
     const session = this.getSession(streamSid);
     session.callerInfo = callerInfo;
     console.log(`👤 Set caller info for session ${streamSid}: ${callerInfo?.name}`);
+    
+    // Also map CallSid to StreamSid for reconnection prevention
+    if (callerInfo && callerInfo.callSid) {
+      this.setCallSid(streamSid, callerInfo.callSid);
+    }
   }
   
   // Set appointment data for outbound call scheduling
@@ -225,6 +252,37 @@ class SessionManager {
         this.triggerSMSCleanup(streamSid, session);
       }
       
+      // CRITICAL: If session is ending (goodbye was said), delay cleanup by 10 seconds
+      // This allows the /twiml endpoint to check isEnding flag and prevent reconnection
+      if (session.isEnding && reason === 'connection_closed') {
+        console.log(`🔚 Session ${streamSid} is ending - delaying cleanup by 10 seconds to prevent reconnection`);
+        setTimeout(() => {
+          console.log(`🧹 Delayed cleanup for ending session ${streamSid}`);
+          this._performCleanup(streamSid);
+        }, 10000); // 10 second delay
+        return; // Don't cleanup immediately
+      }
+      
+      // Immediate cleanup for non-ending sessions
+      this._performCleanup(streamSid);
+    }
+    
+    // Clean up MediaStream
+    this.activeMediaStreams.delete(streamSid);
+    
+    // Clear timeout
+    if (this.sessionTimeouts.has(streamSid)) {
+      clearTimeout(this.sessionTimeouts.get(streamSid));
+      this.sessionTimeouts.delete(streamSid);
+    }
+    
+    globalTimingLogger.logMoment(`Session cleaned up: ${streamSid}`);
+  }
+  
+  // Internal method to perform actual cleanup
+  _performCleanup(streamSid) {
+    const session = this.sessions.get(streamSid);
+    if (session) {
       // Clean up workflow instances
       for (const [workflowName, workflow] of session.workflowInstances) {
         try {
@@ -245,19 +303,13 @@ class SessionManager {
         }
       }
       
+      // Clean up CallSid mapping
+      if (session.callSid) {
+        this.callSidToStreamSid.delete(session.callSid);
+      }
+      
       this.sessions.delete(streamSid);
     }
-    
-    // Clean up MediaStream
-    this.activeMediaStreams.delete(streamSid);
-    
-    // Clear timeout
-    if (this.sessionTimeouts.has(streamSid)) {
-      clearTimeout(this.sessionTimeouts.get(streamSid));
-      this.sessionTimeouts.delete(streamSid);
-    }
-    
-    globalTimingLogger.logMoment(`Session cleaned up: ${streamSid}`);
   }
   
   // Trigger SMS cleanup when connection closes unexpectedly

@@ -202,7 +202,44 @@ function isValidTranscript(transcript, confidence = 0) {
   }
   
   // Must have at least 3 real words for a complete thought (unless it's very specific like "yes" or "no")
-  const shortValidResponses = ['yes', 'no', 'okay', 'ok', 'sure', 'thanks', 'thank you', 'goodbye', 'bye', 'hello', 'hi', 'yeah', 'yep', 'nope', 'right', 'correct', 'wrong', 'true', 'false', 'kindly', 'please', 'can', 'you', 'shift', 'change', 'move', 'cancel', 'appointment', 'meeting', 'no bye', 'yes please', 'and let me', 'done', 'time will be same', 'same time', 'keep same time', 'not correct', 'incorrect', 'wrong date', 'wrong time', 'change it', 'different', 'another', 'i want', 'i need', 'i would like', 'can you', 'could you', 'confirmed', 'agreed', 'accepted', 'approved', 'exactly', 'precisely', 'absolutely', 'i have', 'i have a', 'there is', 'there is a', 'pain in', 'headache', 'head pain', 'pain in my', 'i have pain', 'i have a headache', 'i have a pain', 'there is pain', 'there is a pain'];
+  const shortValidResponses = [
+    // Basic responses
+    'yes', 'no', 'okay', 'ok', 'sure', 'thanks', 'thank you', 'goodbye', 'bye', 'hello', 'hi', 
+    'yeah', 'yep', 'nope', 'right', 'correct', 'wrong', 'true', 'false', 'kindly', 'please', 
+    'can', 'you', 'shift', 'change', 'move', 'cancel', 'appointment', 'meeting', 'done',
+    
+    // Common conversational responses
+    'alright', 'all right', 'fine', 'good', 'great', 'perfect', 'exactly', 'precisely', 'absolutely',
+    'definitely', 'certainly', 'of course', 'sounds good', 'that works', 'that\'s fine', 'that\'s good',
+    'sounds fine', 'looks good', 'seems good', 'seems fine', 'works for me', 'good with me',
+    
+    // Confirmation and agreement
+    'confirmed', 'agreed', 'accepted', 'approved', 'confirmed', 'i agree', 'i accept', 'i approve',
+    'i confirm', 'i\'m good', 'i\'m fine', 'i\'m okay', 'i\'m ready', 'i\'m set',
+    
+    // Disagreement and changes
+    'not correct', 'incorrect', 'wrong date', 'wrong time', 'change it', 'different', 'another',
+    'i want', 'i need', 'i would like', 'can you', 'could you', 'please change', 'please modify',
+    
+    // Time-related
+    'time will be same', 'same time', 'keep same time', 'same date', 'keep same date',
+    
+    // Medical-related
+    'i have', 'i have a', 'there is', 'there is a', 'pain in', 'headache', 'head pain', 
+    'pain in my', 'i have pain', 'i have a headache', 'i have a pain', 'there is pain', 'there is a pain',
+    
+    // Common short phrases
+    'no bye', 'yes please', 'and let me', 'i don\'t', 'i do', 'i will', 'i can', 'i could',
+    'i should', 'i would', 'i might', 'i may', 'i must', 'i have to', 'i need to', 'i want to',
+    'let me', 'let\'s', 'let us', 'go ahead', 'proceed', 'continue', 'stop', 'wait', 'hold on',
+    'just a moment', 'one second', 'give me a second', 'hang on', 'wait a minute',
+    
+    // Specific patterns from logs that were being filtered
+    'no i don\'t', 'no i don\'t need', 'no i don\'t need any', 'no i don\'t need any help',
+    'yes you are', 'yes you are right', 'yes you are confirming', 'yes you are confirming my',
+    'exactly you are', 'exactly you are right', 'exactly you are confirming',
+    'i don\'t need', 'i don\'t need any', 'i don\'t need any help', 'i don\'t need any of the help'
+  ];
   
   // CRITICAL: Allow confirmation phrases
   const confirmationPhrases = [
@@ -238,7 +275,50 @@ function isValidTranscript(transcript, confidence = 0) {
   
   const isTimeResponse = timePatterns.some(pattern => pattern.test(cleanTranscript));
   
-  if (realWords.length < 3 && !shortValidResponses.includes(cleanTranscript) && !isTimeResponse) {
+  // Check if it's a valid short response (handle punctuation and partial matches)
+  const isShortValidResponse = shortValidResponses.some(validResponse => {
+    // Exact match (case insensitive)
+    if (cleanTranscript === validResponse.toLowerCase()) {
+      return true;
+    }
+    
+    // Match with punctuation removed
+    const transcriptNoPunct = cleanTranscript.replace(/[.!?,;:]/g, '').trim();
+    if (transcriptNoPunct === validResponse.toLowerCase()) {
+      return true;
+    }
+    
+    // Partial match for common patterns (e.g., "No. I don't" should match "no" or "i don't")
+    if (realWords.length <= 3) {
+      // Check if any word matches a valid response
+      const hasValidWord = realWords.some(word => 
+        shortValidResponses.includes(word.toLowerCase())
+      );
+      
+      // Check if the transcript starts with a valid response
+      const startsWithValid = shortValidResponses.some(validResponse => 
+        cleanTranscript.startsWith(validResponse.toLowerCase())
+      );
+      
+      // Check if it contains meaningful action words
+      const actionWords = ['confirm', 'change', 'shift', 'move', 'cancel', 'reschedule', 'update', 'modify'];
+      const hasActionWord = realWords.some(word => 
+        actionWords.includes(word.toLowerCase())
+      );
+      
+      // Check if it contains meaningful response words
+      const responseWords = ['yes', 'no', 'okay', 'sure', 'alright', 'fine', 'good', 'great', 'perfect'];
+      const hasResponseWord = realWords.some(word => 
+        responseWords.includes(word.toLowerCase())
+      );
+      
+      return hasValidWord || startsWithValid || hasActionWord || hasResponseWord;
+    }
+    
+    return false;
+  });
+  
+  if (realWords.length < 3 && !isShortValidResponse && !isTimeResponse) {
     console.log(`STT: Filtered too short for complete thought: "${transcript}" (${realWords.length} words)`);
     return false;
   }

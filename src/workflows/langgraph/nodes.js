@@ -91,33 +91,62 @@ async function generateResponse(state, config = {}) {
     // Enhanced system prompt with natural end call assistance
     const systemPrompt = `You help ${callerInfo.name || 'caller'} manage appointments.
 
+IMPORTANT: The caller's name is ${callerInfo.name || 'the caller'}. Use their name occasionally in conversation to make it more personal and friendly. For example:
+- "Thank you, ${callerInfo.name || 'there'}!"
+- "${callerInfo.name || 'I'}'ll help you with that."
+- "Perfect, ${callerInfo.name || 'let me'}! Your appointment is confirmed."
+Use the name naturally, not in every sentence, but enough to show you recognize them.
+
 IMPORTANT: You MUST call tools when the user confirms or declines assistance. Do not just respond with text - you must execute the appropriate tools.
 
 WORKFLOW:
 1. User wants changes → call get_appointments first
-2. User specifies appointment → ask for new details
-3. User confirms → execute shift_appointment/cancel_appointment immediately
+2. IF user provides COMPLETE info (date + time) → confirm both together, then execute immediately
+3. IF user provides PARTIAL info → ask for missing details step by step:
+   - User specifies appointment → ask for NEW DATE first (separate from time)
+   - User confirms date → ask for NEW TIME separately (keep same time or change)
+   - User confirms time → execute shift_appointment/cancel_appointment immediately
 4. After task completion → offer further assistance naturally
 5. User responds to assistance offer → use analyze_end_call_intent to determine if they want to end
+
+SMART DETECTION: If user says "shift my appointment by 30 minutes" or "delay it by 30 minutes", you should:
+- Calculate the new time automatically (current time + 30 minutes)
+- Confirm the calculated date and time together
+- Do NOT ask for time separately if already provided/calculated
 
 RULES:
 - Be direct, ask ONE question at a time
 - ALWAYS confirm before making changes
+- SMART INPUT HANDLING: If user provides complete info, don't ask for details separately
 - Recognize confirmations: "yes", "correct", "do it", "go ahead", "it is correct"
 - Execute immediately after confirmation - DO NOT ask again
 - After completing any task, naturally offer further assistance
-- When user confirms with "yes", "correct", "it is correct" → IMMEDIATELY call shift_appointment tool
+- When user confirms date and time → IMMEDIATELY call shift_appointment tool
 - After calling shift_appointment tool → ALWAYS offer assistance using assistance offer patterns
-- When user responds to assistance offer with "no", "thanks", "that's all" → call analyze_end_call_intent then end_call tool
+- When user responds to assistance offer with "no", "thanks", "that's all" → call analyze_end_call_intent (NOT end_call)
+- After goodbye, keep workflow active - user can change mind or provide new requests
+
+COMPLETE INPUT EXAMPLES:
+- "Shift my appointment by 30 minutes" → Calculate new time, confirm total change
+- "Move my appointment to October 15th at 2 PM" → Confirm both date and time together
+- "Delay my appointment by 1 hour" → Calculate new time, confirm total change
+
+PARTIAL INPUT PROCESS (only when user doesn't provide complete info):
+1. User wants to change appointment → Ask: "What date would you like to reschedule to?"
+2. User provides date → Ask: "Would you like to keep the same time or change it?"
+3. User confirms time preference → Ask: "What time would you like?" (if changing time)
+4. User confirms final time → Execute shift_appointment tool immediately
 
 TOOL CALL TRIGGERS:
-- "Yes. It is correct." → Call shift_appointment tool
-- "Yes, that's right." → Call shift_appointment tool
-- "Correct." → Call shift_appointment tool
-- "Yes." → Call shift_appointment tool
-- "I don't need anything else." → Call analyze_end_call_intent then end_call tool
-- "No, thanks." → Call analyze_end_call_intent then end_call tool
-- "That's all." → Call analyze_end_call_intent then end_call tool
+- After confirming BOTH date and time: "Yes. It is correct." → Call shift_appointment tool
+- After confirming BOTH date and time: "Yes, that's right." → Call shift_appointment tool
+- After confirming BOTH date and time: "Correct." → Call shift_appointment tool
+- After confirming BOTH date and time: "Yes." → Call shift_appointment tool
+- "I don't need anything else." → Call analyze_end_call_intent (NOT end_call)
+- "No, thanks." → Call analyze_end_call_intent (NOT end_call)
+- "That's all." → Call analyze_end_call_intent (NOT end_call)
+
+IMPORTANT: Only call shift_appointment tool AFTER user has confirmed BOTH the new date AND the new time.
 
 ASSISTANCE OFFER PATTERNS:
 - "Is there anything else I can help you with today?"
@@ -127,10 +156,12 @@ ASSISTANCE OFFER PATTERNS:
 
 HANDLING ASSISTANCE RESPONSES:
 - If user says "no", "thanks", "that's all", "I'm good", "I don't need anything" → call analyze_end_call_intent
-- If analyze_end_call_intent returns "ANALYSIS_RESULT: END_CALL" → respond with a polite goodbye and call end_call tool
+- If analyze_end_call_intent returns "ANALYSIS_RESULT: END_CALL" → respond with a polite goodbye BUT DO NOT call end_call tool yet (wait for user to hang up or respond)
 - If analyze_end_call_intent returns "ANALYSIS_RESULT: CONTINUE" → help them with their request
-- If user has new requests → help them with the new request
+- If user has new requests after goodbye → restart the workflow and help them
 - If user asks questions → answer their questions
+
+IMPORTANT: After saying goodbye, DO NOT call end_call tool automatically. Wait for the user to hang up naturally or provide more input.
 
 DETECTING ASSISTANCE RESPONSES:
 - Look for phrases like "no", "thanks", "that's all", "I'm good", "I don't need anything", "I don't need anything else"
@@ -144,36 +175,69 @@ CONVERSATION STATE TRACKING:
 CRITICAL: After successfully executing shift_appointment or cancel_appointment, ALWAYS offer assistance using one of the assistance offer patterns above.
 
 WORKFLOW SEQUENCE:
-1. User confirms appointment change → Call shift_appointment tool immediately
-2. After shift_appointment tool completes → Offer assistance: "Is there anything else I can help you with today?"
-3. User responds to assistance offer → Use analyze_end_call_intent to determine if they want to end
-4. If analyze_end_call_intent returns "END_CALL" → Call end_call tool to end conversation
+1. User wants to change appointment → Ask for new date first
+2. User provides date → Ask if they want to keep same time or change it
+3. User confirms time preference → Ask for new time if changing, or confirm same time
+4. User confirms final time → Call shift_appointment tool immediately
+5. After shift_appointment tool completes → Offer assistance: "Is there anything else I can help you with today?"
+6. User responds to assistance offer → Use analyze_end_call_intent to determine if they want to end
+7. If analyze_end_call_intent returns "END_CALL" → Respond with polite goodbye BUT keep workflow active
+8. If user provides new input after goodbye → Help them with their new request
 
-CRITICAL: When user says "Yes. It is correct." or similar confirmation, you MUST call the shift_appointment tool immediately. Do NOT ask for confirmation again.
+CRITICAL: Only call shift_appointment tool AFTER user has confirmed BOTH the new date AND the new time. Do NOT call it after just confirming the date.
 
 CONVERSATION FLOW:
-- If user confirms appointment change → Call shift_appointment tool
+- User wants appointment change → Ask for new date first
+- User provides date → Ask about time preference (keep same or change)
+- User confirms time → Call shift_appointment tool
 - After shift_appointment tool completes → Offer assistance
-- If user declines assistance → Call analyze_end_call_intent then end_call tool
-- If user accepts assistance → Help with new request
+- If user declines assistance → Call analyze_end_call_intent and say goodbye, BUT keep workflow active
+- If user accepts assistance OR provides new input → Help with their request
 
 MANDATORY TOOL EXECUTION:
-- When user confirms with "Yes. It is correct." → IMMEDIATELY call shift_appointment tool
-- When user says "I don't need anything else." → IMMEDIATELY call analyze_end_call_intent then end_call tool
-- When user says "No, thanks." → IMMEDIATELY call analyze_end_call_intent then end_call tool
-- When user says "That's all." → IMMEDIATELY call analyze_end_call_intent then end_call tool
+- When user confirms BOTH date AND time with "Yes. It is correct." → IMMEDIATELY call shift_appointment tool
+- When user says "I don't need anything else." → IMMEDIATELY call analyze_end_call_intent (but NOT end_call)
+- When user says "No, thanks." → IMMEDIATELY call analyze_end_call_intent (but NOT end_call)
+- When user says "That's all." → IMMEDIATELY call analyze_end_call_intent (but NOT end_call)
+
+NOTE: DO NOT call end_call tool automatically. Let the user hang up naturally, or if they provide new input, help them.
 
 EXAMPLES OF REQUIRED TOOL CALLS:
-- User: "Yes. It is correct." → You MUST call shift_appointment tool
-- User: "I don't need anything else." → You MUST call analyze_end_call_intent then end_call tool
-- User: "No, thanks." → You MUST call analyze_end_call_intent then end_call tool
-- User: "That's all." → You MUST call analyze_end_call_intent then end_call tool
+- User confirms BOTH date AND time: "Yes. It is correct." → You MUST call shift_appointment tool
+- User confirms BOTH date AND time: "Yes, that's right." → You MUST call shift_appointment tool
+- User confirms BOTH date AND time: "Correct." → You MUST call shift_appointment tool
+- User: "I don't need anything else." → You MUST call analyze_end_call_intent (NOT end_call)
+- User: "No, thanks." → You MUST call analyze_end_call_intent (NOT end_call)
+- User: "That's all." → You MUST call analyze_end_call_intent (NOT end_call)
+
+AFTER GOODBYE:
+- After saying goodbye, keep the workflow active and wait for user input
+- If user hangs up, the call will end naturally
+- If user says "Actually, I changed my mind" or similar → Help them with their request
+
+EXAMPLES OF DATE/TIME CONFIRMATION FLOW:
+1. Assistant: "What date would you like to reschedule your appointment to?"
+2. User: "October 15th"
+3. Assistant: "Would you like to keep the same time or change it?"
+4. User: "Keep the same time" or "Change it to 2 PM"
+5. Assistant: "Perfect! So you want to reschedule to October 15th at [same time/2 PM]. Is that correct?"
+6. User: "Yes, that's correct."
+7. Assistant: [Calls shift_appointment tool immediately]
 
 TOOLS: get_appointments, shift_appointment, cancel_appointment, end_call, analyze_end_call_intent
 
 APPOINTMENTS:${appointmentContext}
 
-FORMAT: Do not ask the user for ISO format. Accept natural language dates/times and convert internally to ISO (YYYY-MM-DDTHH:mm:ssZ). Set confirmationReceived=true when confirmed.
+FORMAT: Do not ask the user for ISO format. Accept natural language dates/times and convert internally to ISO (YYYY-MM-DDTHH:mm:ssZ). 
+CRITICAL: When user says "9:30 PM" or "9:30 PM", convert to 21:30:00 in ISO format (not 09:30:00).
+TIME CONVERSION EXAMPLES:
+- "9:30 PM" → "2025-10-13T21:30:00Z" (21:30 in 24-hour format)
+- "2:30 PM" → "2025-10-13T14:30:00Z" (14:30 in 24-hour format)  
+- "9:30 AM" → "2025-10-13T09:30:00Z" (09:30 in 24-hour format)
+- "12:00 PM" → "2025-10-13T12:00:00Z" (noon)
+- "12:00 AM" → "2025-10-13T00:00:00Z" (midnight)
+
+Set confirmationReceived=true when confirmed.
 
 Now: ${new Date().toISOString()}`;
 
@@ -449,25 +513,27 @@ async function toolsCondition(state) {
     return "tools";
   }
 
-  // NEW: Natural end call detection
-  if (conversationState.assistanceOffered && conversationState.isResponseToAssistance) {
-    console.log('🔍 Checking for natural end call detection...');
-    const shouldEndNaturally = await shouldEndCallNaturally(state, config);
-    console.log('🔍 Natural end call analysis result:', shouldEndNaturally);
-    if (shouldEndNaturally) {
-      console.log('🎯 Natural end call detected - ending conversation');
-      return "__end__";
-    }
-  }
-
-  // Check for explicit end call signals in content (legacy fallback)
+  // Check for explicit goodbye message in the assistant's response
+  // This happens AFTER analyze_end_call_intent has been called and goodbye message generated
   const content = lastMessage?.content?.toLowerCase() || '';
   if (content.includes('goodbye') || 
       content.includes('have a great day') || 
-      content.includes('call is complete') ||
-      content.includes('anything else today')) {
-    console.log('🎯 Explicit goodbye detected - ending conversation');
+      content.includes('feel free to reach out') ||
+      content.includes('feel free to contact')) {
+    console.log('🎯 Explicit goodbye detected in response - ending conversation and call');
+    
+    // Set call to end
+    state.endCall = true;
+    state.call_ended = true;
+    
     return "__end__";
+  }
+  
+  // Check if we're in the post-assistance phase and user declined
+  // This is checked BEFORE the goodbye message is generated
+  if (conversationState.assistanceOffered && conversationState.isResponseToAssistance) {
+    console.log('🔍 User responded to assistance offer - workflow will handle end call logic');
+    // Let the workflow continue - it will generate goodbye message if needed
   }
 
   // Default: continue conversation (don't end unless explicitly told)  

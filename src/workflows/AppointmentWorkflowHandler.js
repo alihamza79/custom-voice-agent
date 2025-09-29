@@ -106,12 +106,23 @@ class AppointmentWorkflowHandler {
       // Update workflow session state
       const session = sessionManager.getSession(streamSid);
       if (session && session.langChainSession) {
-        // FIXED: Keep workflow active if we offered assistance OR if we need to process endCall
-        // This allows the system to handle user responses to assistance offers and end call processing
-        const offeredAssistance = result.response?.includes('anything else') || result.response?.includes('help you with');
-        const shouldKeepActive = offeredAssistance || result.endCall;
+        // FIXED: Keep workflow active unless we're explicitly ending the call with a goodbye
+        // The workflow should stay active when:
+        // 1. Asking for confirmation (date, time, appointment details)
+        // 2. Waiting for user input to complete the task
+        // 3. Offering assistance after task completion
+        // 4. Processing end call (so we can handle the goodbye)
+        const response = result.response?.toLowerCase() || '';
+        const hasGoodbyeMessage = response.includes('goodbye') || 
+                                 response.includes('have a great day') || 
+                                 response.includes('thank you for using') ||
+                                 response.includes('feel free to reach out') ||
+                                 response.includes('thank you for reaching out');
         
-        console.log(`🔍 DEBUG continueWorkflow: Setting workflowActive=${shouldKeepActive} (endCall=${result.endCall}, hasAssistanceOffer=${result.response?.includes('anything else')})`);
+        // Only set workflowActive=false if we said goodbye
+        const shouldKeepActive = !hasGoodbyeMessage;
+        
+        console.log(`🔍 DEBUG continueWorkflow: Setting workflowActive=${shouldKeepActive} (endCall=${result.endCall}, hasGoodbye=${hasGoodbyeMessage})`);
         sessionManager.setLangChainSession(streamSid, {
           ...session.langChainSession,
           workflowActive: shouldKeepActive,
@@ -133,24 +144,35 @@ class AppointmentWorkflowHandler {
           console.log('🎯 Processing end call logic in AppointmentWorkflowHandler - goodbye message detected');
           const sessionManager = require('../services/sessionManager');
           const mediaStream = sessionManager.getMediaStream(streamSid);
+          const session = sessionManager.getSession(streamSid);
+          
           if (mediaStream) {
-            console.log('🎯 Setting isEnding flag and closing connection');
+            // Set isEnding flag immediately to stop new input processing
             mediaStream.isEnding = true;
+            console.log('🎯 Setting isEnding flag - call will end after TTS completes');
             
-            // Calculate delay based on message length (roughly 150 words per minute = 2.5 words per second)
-            const messageLength = result.response?.length || 0;
-            const estimatedWords = messageLength / 5; // Rough estimate: 5 characters per word
-            const estimatedSeconds = Math.max(3, Math.ceil(estimatedWords / 2.5)); // At least 3 seconds
-            const delayMs = estimatedSeconds * 1000;
+            // FIXED: Use same approach as delay notification workflow
+            // Manually close WebSocket after TTS completes (3 seconds minimum)
+            const delayMs = 3000;
             
-            console.log(`🔚 Scheduling connection closure in ${delayMs}ms (${estimatedSeconds}s) for message of ${messageLength} chars`);
+            console.log(`🔚 TTS will complete in approximately ${delayMs}ms (3s)`);
+            console.log(`🔚 Will manually close WebSocket connection after TTS - same approach as delay notification`);
             
+            // CRITICAL: Close WebSocket after TTS completes (same as delay workflow)
             setTimeout(() => {
               if (mediaStream.connection && !mediaStream.connection.closed) {
-                console.log('🔚 Closing connection after TTS delay');
+                console.log('🔚 Closing WebSocket connection after TTS delay - this will end the Twilio call');
                 mediaStream.connection.close();
+              } else {
+                console.log('🔚 WebSocket already closed');
               }
             }, delayMs);
+          }
+          
+          // CRITICAL: Set isEnding flag on session to prevent reconnection
+          if (session) {
+            session.isEnding = true;
+            console.log('🔚 Set session isEnding=true to prevent TwiML reconnection');
           }
         } else {
           console.log('🔍 End call detected but no goodbye message - keeping workflow active for user response');

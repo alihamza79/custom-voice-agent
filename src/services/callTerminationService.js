@@ -56,6 +56,12 @@ class CallTerminationService {
         return { success: true, message: 'Call terminated successfully' };
         
       } catch (error) {
+        // FIXED: Handle the case where the call is no longer in-progress
+        if (error.code === 21220 || error.message?.includes('not in-progress')) {
+          console.log("📞 Call already ended by user - no action needed");
+          return { success: true, message: 'Call already ended' };
+        }
+        
         console.error("❌ Error redirecting call to hangup TwiML:", error);
         return { success: false, error: error.message };
       }

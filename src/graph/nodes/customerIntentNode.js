@@ -6,7 +6,7 @@ const { globalTimingLogger } = require('../../utils/timingLogger');
 const performanceLogger = require('../../utils/performanceLogger');
 const calendarPreloader = require('../../services/calendarPreloader');
 const sessionManager = require('../../services/sessionManager');
-const callTerminationService = require('../../services/callTerminationService');
+// REMOVED: callTerminationService - now handled by LangGraph workflow (AppointmentWorkflowHandler.js)
 const fillerAudioService = require('../../services/fillerAudioService');
 
 const openai = new OpenAI();
@@ -126,32 +126,9 @@ const customerIntentNode = RunnableLambda.from(async (state) => {
           const callDuration = Date.now() - (state.callStartTime || Date.now());
           console.log(`📊 [CUSTOMER_INTENT] Call ended gracefully - Duration: ${callDuration}ms`);
           
-          // Schedule graceful call termination
-          setTimeout(async () => {
-            try {
-              const callSid = state.callerInfo?.callSid || state.callSid;
-              if (callSid) {
-                console.log('🔚 [CUSTOMER_INTENT] Terminating call gracefully...');
-                await callTerminationService.endCall(callSid, state.streamSid);
-                
-                // Send SMS confirmation after call termination
-                setTimeout(async () => {
-                  try {
-                    console.log('📱 [CUSTOMER_INTENT] Sending SMS confirmation...');
-                    await callTerminationService.sendConfirmationSMS(
-                      state.streamSid, 
-                      'confirmed', 
-                      callDuration
-                    );
-                  } catch (smsError) {
-                    console.error('❌ [CUSTOMER_INTENT] Error sending SMS confirmation:', smsError);
-                  }
-                }, 1000); // 1 second after call termination
-              }
-            } catch (terminationError) {
-              console.error('❌ [CUSTOMER_INTENT] Error terminating call:', terminationError);
-            }
-          }, 2000); // 2 second delay for graceful ending
+          // REMOVED: Call termination now handled by AppointmentWorkflowHandler.js
+          // The LangGraph workflow handles WebSocket closure, no need for Twilio redirect
+          console.log('📞 [CUSTOMER_INTENT] Call ending gracefully...');
           
         } catch (error) {
           console.error('❌ [CUSTOMER_INTENT] Error in graceful call ending:', error);

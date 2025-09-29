@@ -177,9 +177,11 @@ function healthCheck(req, res) {
 function handleCallHangup(req, res) {
   console.log('🔚 Call hangup TwiML requested');
   
+  // CRITICAL FIX: Do NOT include <Say> here - it causes WebSocket reconnection
+  // The goodbye message has already been sent via our WebSocket TTS
+  // This TwiML should ONLY hangup the call
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-US">Thank you for using our service. Goodbye.</Say>
     <Hangup/>
 </Response>`;
   

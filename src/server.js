@@ -248,7 +248,6 @@ function handleTwiMLRequest(req, res) {
       <Parameter name="accountSid" value="${accountSid}" />
     </Stream>
   </Connect>
-  <Say>Goodbye.</Say>
 </Response>`;
 
     res.writeHead(200, {
@@ -365,16 +364,45 @@ dispatcher.onPost("/twiml", function (req, res) {
   // Handle regular inbound calls
   console.log('📞 [TWiML_ROUTE] Handling regular TwiML request');
   
-  // Simple approach: try to get parameters, but always send immediate response
+  // Parse body to get CallSid for reconnection check
   let callerNumber = 'Unknown';
   let callSid = '';
   let accountSid = '';
   
-  // Try to get parameters if available (but don't wait for async parsing)
-  if (req.post && req.post.From) {
-    callerNumber = req.post.From;
+  // CRITICAL: Parse POST body to get CallSid BEFORE checking for reconnection
+  let bodyParsed = false;
+  if (req.post && req.post.CallSid) {
+    // Body already parsed by dispatcher
+    callerNumber = req.post.From || 'Unknown';
     callSid = req.post.CallSid || '';
     accountSid = req.post.AccountSid || '';
+    bodyParsed = true;
+    console.log(`📞 [TWiML_ROUTE] Got CallSid from req.post: ${callSid}`);
+  }
+  
+  // CRITICAL FIX: Check if this is a reconnection attempt after hangup
+  // If the CallSid already has an active session that's ending, return immediate hangup
+  if (callSid && bodyParsed) {
+    console.log(`📞 [TWiML_ROUTE] Checking for existing session with CallSid: ${callSid}`);
+    const existingSession = sessionManager.getSessionByCallSid(callSid);
+    console.log(`📞 [TWiML_ROUTE] Existing session found:`, {
+      found: !!existingSession,
+      isEnding: existingSession?.isEnding
+    });
+    
+    if (existingSession && existingSession.isEnding) {
+      console.log(`🔚 [TWiML_ROUTE] Call ${callSid} is already ending - returning hangup TwiML to prevent reconnection`);
+      const hangupTwiml = `<?xml version="1.0" encoding="UTF-8" ?>
+<Response>
+  <Hangup/>
+</Response>`;
+      res.writeHead(200, {
+        "Content-Type": "text/xml",
+        "Content-Length": Buffer.byteLength(hangupTwiml, 'utf8'),
+      });
+      res.end(hangupTwiml);
+      return;
+    }
   }
   
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8" ?>
@@ -386,7 +414,6 @@ dispatcher.onPost("/twiml", function (req, res) {
       <Parameter name="accountSid" value="${accountSid}" />
     </Stream>
   </Connect>
-  <Say>Goodbye.</Say>
 </Response>`;
 
   res.writeHead(200, {
