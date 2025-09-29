@@ -1,0 +1,178 @@
+{
+  "shift_cancel_appointment": [
+    {
+      "text": "Let me pull up your appointments",
+      "file": "shift_cancel_appointment_1.wav"
+    },
+    {
+      "text": "Checking your schedule",
+      "file": "shift_cancel_appointment_2.wav"
+    },
+    {
+      "text": "Let me see what appointments you have",
+      "file": "shift_cancel_appointment_3.wav"
+    },
+    {
+      "text": "Accessing your calendar",
+      "file": "shift_cancel_appointment_4.wav"
+    },
+    {
+      "text": "Looking at your upcoming meetings",
+      "file": "shift_cancel_appointment_5.wav"
+    },
+    {
+      "text": "Reviewing your schedule",
+      "file": "shift_cancel_appointment_6.wav"
+    },
+    {
+      "text": "Getting your appointment details",
+      "file": "shift_cancel_appointment_7.wav"
+    },
+    {
+      "text": "Checking what you have planned",
+      "file": "shift_cancel_appointment_8.wav"
+    },
+    {
+      "text": "Looking up your meetings",
+      "file": "shift_cancel_appointment_9.wav"
+    },
+    {
+      "text": "Fetching your calendar info",
+      "file": "shift_cancel_appointment_10.wav"
+    }
+  ],
+  "check_find_search": [
+    {
+      "text": "Let me check that for you",
+      "file": "check_find_search_1.wav"
+    },
+    {
+      "text": "Looking that up",
+      "file": "check_find_search_2.wav"
+    },
+    {
+      "text": "Searching our records",
+      "file": "check_find_search_3.wav"
+    },
+    {
+      "text": "Finding that information",
+      "file": "check_find_search_4.wav"
+    },
+    {
+      "text": "Checking our system",
+      "file": "check_find_search_5.wav"
+    },
+    {
+      "text": "Looking into that",
+      "file": "check_find_search_6.wav"
+    },
+    {
+      "text": "Searching for that",
+      "file": "check_find_search_7.wav"
+    },
+    {
+      "text": "Getting that info",
+      "file": "check_find_search_8.wav"
+    },
+    {
+      "text": "Checking the details",
+      "file": "check_find_search_9.wav"
+    },
+    {
+      "text": "Looking that up for you",
+      "file": "check_find_search_10.wav"
+    }
+  ],
+  "book_schedule_create": [
+    {
+      "text": "Let me set that up for you",
+      "file": "book_schedule_create_1.wav"
+    },
+    {
+      "text": "Processing your booking",
+      "file": "book_schedule_create_2.wav"
+    },
+    {
+      "text": "Getting that scheduled",
+      "file": "book_schedule_create_3.wav"
+    },
+    {
+      "text": "Setting up that appointment",
+      "file": "book_schedule_create_4.wav"
+    },
+    {
+      "text": "Creating that booking",
+      "file": "book_schedule_create_5.wav"
+    },
+    {
+      "text": "Arranging that for you",
+      "file": "book_schedule_create_6.wav"
+    },
+    {
+      "text": "Processing that request",
+      "file": "book_schedule_create_7.wav"
+    },
+    {
+      "text": "Getting that organized",
+      "file": "book_schedule_create_8.wav"
+    },
+    {
+      "text": "Setting that up",
+      "file": "book_schedule_create_9.wav"
+    },
+    {
+      "text": "Making that reservation",
+      "file": "book_schedule_create_10.wav"
+    }
+  ],
+  "general": [
+    {
+      "text": "Let me help you with that",
+      "file": "general_1.wav"
+    },
+    {
+      "text": "One moment",
+      "file": "general_2.wav"
+    },
+    {
+      "text": "Let me assist you",
+      "file": "general_3.wav"
+    },
+    {
+      "text": "I'm here to help",
+      "file": "general_4.wav"
+    },
+    {
+      "text": "Processing your request",
+      "file": "general_5.wav"
+    },
+    {
+      "text": "Working on that",
+      "file": "general_6.wav"
+    },
+    {
+      "text": "Let me handle that",
+      "file": "general_7.wav"
+    },
+    {
+      "text": "I'll take care of that",
+      "file": "general_8.wav"
+    },
+    {
+      "text": "Looking into that",
+      "file": "general_9.wav"
+    },
+    {
+      "text": "Give me just a moment",
+      "file": "general_10.wav"
+    },
+    {
+      "text": "Processing that for you",
+      "file": "general_11.wav"
+    },
+    {
+      "text": "Let me see what I can do",
+      "file": "general_12.wav"
+    }
+  ]
+}

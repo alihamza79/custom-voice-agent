@@ -7,6 +7,7 @@ const performanceLogger = require('../../utils/performanceLogger');
 const calendarPreloader = require('../../services/calendarPreloader');
 const sessionManager = require('../../services/sessionManager');
 const callTerminationService = require('../../services/callTerminationService');
+const fillerAudioService = require('../../services/fillerAudioService');
 
 const openai = new OpenAI();
 
@@ -415,39 +416,48 @@ Classify this into one of the 5 categories.`;
       // Start filler speaking in parallel (don't await it)
       const fillerPromise = (async () => {
         try {
-          const { getCurrentMediaStream } = require('../../server');
-          const mediaStream = getCurrentMediaStream();
+          globalTimingLogger.startOperation('Filler Audio');
           
-          if (mediaStream) {
-            globalTimingLogger.startOperation('Filler TTS');
+          // Try to use pre-recorded audio first (0ms delay)
+          const audioPlayed = await fillerAudioService.playFillerAudio(
+            immediateResponse, 
+            state.streamSid, 
+            state.language || 'english'
+          );
+          
+          if (!audioPlayed) {
+            // Fallback to Azure TTS if no pre-recorded audio available
+            console.log('🔄 Fallback to Azure TTS for filler');
+            const { getCurrentMediaStream } = require('../../server');
+            const mediaStream = getCurrentMediaStream();
             
-            // Set up mediaStream for TTS
-            mediaStream.speaking = true;
-            mediaStream.ttsStart = Date.now();
-            mediaStream.firstByte = true;
-            mediaStream.currentMediaStream = mediaStream;
-            
-            // Speak the generic filler immediately
-            const azureTTSService = require('../../services/azureTTSService');
-            await azureTTSService.synthesizeStreaming(
-              immediateResponse,
-              mediaStream,
-              state.language || 'english'
-            );
-            globalTimingLogger.endOperation('Filler TTS');
-          } else {
-            globalTimingLogger.logError(new Error('No mediaStream available'), 'Filler TTS');
+            if (mediaStream) {
+              // Set up mediaStream for TTS
+              mediaStream.speaking = true;
+              mediaStream.ttsStart = Date.now();
+              mediaStream.firstByte = true;
+              mediaStream.currentMediaStream = mediaStream;
+              
+              // Speak the generic filler immediately
+              const azureTTSService = require('../../services/azureTTSService');
+              await azureTTSService.synthesizeStreaming(
+                immediateResponse,
+                mediaStream,
+                state.language || 'english'
+              );
+            } else {
+              globalTimingLogger.logError(new Error('No mediaStream available'), 'Filler TTS');
+            }
           }
+          
+          globalTimingLogger.endOperation('Filler Audio');
         } catch (error) {
-          globalTimingLogger.logError(error, 'Filler TTS');
+          globalTimingLogger.logError(error, 'Filler Audio');
         }
       })();
       
       // Don't await fillerPromise - let it run in parallel
       globalTimingLogger.logMoment('Filler started in parallel - continuing with LangChain workflow');
-      
-      // Small delay to ensure filler starts first
-      await new Promise(resolve => setTimeout(resolve, 50));
       
       // CRITICAL: Set the immediate callback in session for filler words
       if (!session || !session.immediateCallback) {
