@@ -16,6 +16,11 @@ class DelayNotificationWorkflowHandler {
   async startWorkflow(streamSid, transcript, callerInfo) {
     console.log(`🚀 Starting delay notification workflow for ${streamSid}`);
     
+    // Update VAD timing for this workflow (extended wait times for complex responses)
+    const vadService = require('../services/vadService');
+    vadService.updateWorkflowType(streamSid, 'delay_notification');
+    console.log(`⏱️ VAD: Configured for delay_notification workflow (extended timing for pauses)`);
+    
     globalTimingLogger.startOperation('Delay Notification Workflow');
     
     try {
@@ -172,9 +177,9 @@ class DelayNotificationWorkflowHandler {
           console.log('🎯 Setting isEnding flag - call will end after TTS completes');
           
           // CRITICAL: Close WebSocket after TTS completes (same as appointment workflow)
-          const delayMs = 3000;
+          const delayMs = 9000;
           
-          console.log(`🔚 TTS will complete in approximately ${delayMs}ms (3s)`);
+          console.log(`🔚 TTS will complete in approximately ${delayMs}ms (9s)`);
           console.log(`🔚 Will manually close WebSocket connection after TTS`);
           
           setTimeout(() => {

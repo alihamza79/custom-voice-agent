@@ -183,12 +183,12 @@ class CustomerDelayGraphHandler {
     }
 
     console.log(`🎯 [CUSTOMER_DELAY_GRAPH] Setting isEnding flag - call will end after TTS completes`);
-    console.log(`🔚 [CUSTOMER_DELAY_GRAPH] TTS will complete in approximately 7000ms (7s) - allowing full sentence`);
+    console.log(`🔚 [CUSTOMER_DELAY_GRAPH] TTS will complete in approximately 9000ms (9s) - allowing full sentence`);
     console.log(`🔚 [CUSTOMER_DELAY_GRAPH] Will close WebSocket connection to end call gracefully`);
     console.log(`🔚 [CUSTOMER_DELAY_GRAPH] Set session isEnding=true to prevent TwiML reconnection`);
 
     // Terminate call after TTS completes by closing WebSocket
-    // CRITICAL: Allow enough time for bot to finish speaking (7 seconds)
+    // CRITICAL: Allow enough time for bot to finish speaking (9 seconds)
     // This method ends gracefully without Twilio error message
     setTimeout(() => {
       console.log(`🔚 [CUSTOMER_DELAY_GRAPH] Closing WebSocket connection after TTS delay`);
@@ -199,7 +199,7 @@ class CustomerDelayGraphHandler {
       } else {
         console.log(`🔚 [CUSTOMER_DELAY_GRAPH] WebSocket already closed`);
       }
-    }, 7000); // Allow 7 seconds for bot to finish speaking
+    }, 9000); // Allow 9 seconds for bot to finish speaking
   }
 }
 

@@ -67,16 +67,26 @@ async function processUtterance(utterance, mediaStream) {
               utterance
             );
         } else if ((session.langChainSession.workflowType === 'customer_delay_response' || 
-                    session.langChainSession.workflowType === 'customer_delay_graph') && 
-                   session.langChainSession.workflowActive) {
+                   session.langChainSession.workflowType === 'customer_delay_graph') && 
+                  session.langChainSession.workflowActive) {
           // Customer delay response workflow (CUSTOMER side) - LangGraph-based
           const customerDelayGraphHandler = require('../workflows/CustomerDelayGraphHandler');
           workflowResult = await customerDelayGraphHandler.continueWorkflow(
             mediaStream.streamSid,
             utterance
           );
+          } else if (session.langChainSession.workflowType === 'appointment' && 
+                     session.langChainSession.workflowActive) {
+            // LangGraph appointment workflow (shift/cancel appointments)
+            const AppointmentWorkflowHandler = require('../workflows/AppointmentWorkflowHandler');
+            const appointmentHandler = new AppointmentWorkflowHandler();
+            workflowResult = await appointmentHandler.continueWorkflow(
+              mediaStream.streamSid,
+              utterance
+            );
           } else {
             // Fallback for other workflow types
+            console.error('❌ Unknown workflow type:', session.langChainSession.workflowType);
             workflowResult = {
               response: "I'm having trouble processing your request. Please try again.",
               call_ended: false,

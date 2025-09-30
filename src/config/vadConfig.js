@@ -4,10 +4,41 @@
  */
 
 const VAD_CONFIG = {
-  // Silence Detection Timing
+  // Silence Detection Timing (Default)
   silenceThreshold: 3000,        // How long to wait before considering user silent (ms)
   timeoutThreshold: 8000,        // How long to wait before prompting user (ms)
   postSpeakingGracePeriod: 1000, // Grace period after assistant stops speaking (ms)
+  
+  // Workflow-Specific Timing Overrides
+  workflowTimings: {
+    // Teammate delay workflow needs LONGER wait times
+    // Users often pause while gathering information (customer name, delay time, etc.)
+    delay_notification: {
+      silenceThreshold: 4500,      // Wait 4.5 seconds before considering silent
+      timeoutThreshold: 10000,     // Wait 10 seconds before timeout
+      postSpeakingGracePeriod: 1500, // 1.5 second grace period
+      utteranceEndMs: 2000,        // Wait 2 seconds after speech ends before finalizing
+      description: "Extended timing for teammates providing delay details"
+    },
+    
+    // Customer delay response - moderate timing
+    customer_delay_response: {
+      silenceThreshold: 3000,
+      timeoutThreshold: 8000,
+      postSpeakingGracePeriod: 1000,
+      utteranceEndMs: 1500,
+      description: "Standard timing for customer responses"
+    },
+    
+    // Appointment management - standard timing
+    appointment: {
+      silenceThreshold: 3000,
+      timeoutThreshold: 8000,
+      postSpeakingGracePeriod: 1000,
+      utteranceEndMs: 1500,
+      description: "Standard timing for appointment changes"
+    }
+  },
   
   // Behavioral Settings
   enableSilencePrompts: true,     // Send prompts when user is silent

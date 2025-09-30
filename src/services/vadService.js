@@ -21,7 +21,7 @@ class VADService {
   /**
    * Initialize VAD tracking for a session
    */
-  initializeSession(streamSid) {
+  initializeSession(streamSid, workflowType = null) {
     const state = {
       lastSpeechActivity: Date.now(),
       isSpeaking: false,
@@ -30,12 +30,13 @@ class VADService {
       hasPromptedForSilence: false,
       conversationActive: true,
       assistantSpeaking: false,
-      gracePeriodActive: false
+      gracePeriodActive: false,
+      workflowType: workflowType // Track workflow type for dynamic timing
     };
     
     this.silenceStates.set(streamSid, state);
     if (this.config.enableVADLogging) {
-      console.log(`🎤 VAD: Initialized silence detection for session ${streamSid.substring(0, 8)}`);
+      console.log(`🎤 VAD: Initialized silence detection for session ${streamSid.substring(0, 8)} (workflow: ${workflowType || 'default'})`);
     }
   }
 
@@ -120,14 +121,17 @@ class VADService {
     const state = this.silenceStates.get(streamSid);
     if (!state) return;
 
+    // Get workflow-specific timing
+    const timing = this.getWorkflowTiming(state.workflowType);
+
     if (this.config.enableVADLogging) {
-      console.log(`🤖 VAD: Assistant stopped speaking for ${streamSid.substring(0, 8)}`);
+      console.log(`🤖 VAD: Assistant stopped speaking for ${streamSid.substring(0, 8)} (grace period: ${timing.postSpeakingGracePeriod}ms)`);
     }
     
     state.assistantSpeaking = false;
     state.gracePeriodActive = true;
     
-    // Start grace period timer
+    // Start grace period timer with workflow-specific duration
     const gracePeriodTimer = setTimeout(() => {
       state.gracePeriodActive = false;
       
@@ -135,9 +139,24 @@ class VADService {
       if (!state.isSpeaking && state.silenceStartTime) {
         this.startSilenceMonitoring(streamSid);
       }
-    }, this.config.postSpeakingGracePeriod);
+    }, timing.postSpeakingGracePeriod);
     
     this.silenceTimers.set(`${streamSid}_grace`, gracePeriodTimer);
+  }
+
+  /**
+   * Get timing configuration for a specific workflow
+   */
+  getWorkflowTiming(workflowType) {
+    if (!workflowType || !this.config.workflowTimings || !this.config.workflowTimings[workflowType]) {
+      return {
+        silenceThreshold: this.config.silenceThreshold,
+        timeoutThreshold: this.config.timeoutThreshold,
+        postSpeakingGracePeriod: this.config.postSpeakingGracePeriod
+      };
+    }
+    
+    return this.config.workflowTimings[workflowType];
   }
 
   /**
@@ -147,22 +166,25 @@ class VADService {
     const state = this.silenceStates.get(streamSid);
     if (!state || !state.conversationActive) return;
 
+    // Get workflow-specific timing
+    const timing = this.getWorkflowTiming(state.workflowType);
+    
     if (this.config.enableVADLogging) {
-      console.log(`⏱️ VAD: Starting silence monitoring for ${streamSid.substring(0, 8)}`);
+      console.log(`⏱️ VAD: Starting silence monitoring for ${streamSid.substring(0, 8)} (workflow: ${state.workflowType || 'default'}, silence: ${timing.silenceThreshold}ms, timeout: ${timing.timeoutThreshold}ms)`);
     }
     
     // Clear any existing timers
     this.clearTimers(streamSid);
     
-    // Set silence detection timer
+    // Set silence detection timer with workflow-specific threshold
     const silenceTimer = setTimeout(() => {
       this.handleSilenceDetected(streamSid);
-    }, this.config.silenceThreshold);
+    }, timing.silenceThreshold);
     
     // Set timeout timer (longer duration for conversation timeout)
     const timeoutTimer = setTimeout(() => {
       this.handleConversationTimeout(streamSid);
-    }, this.config.timeoutThreshold);
+    }, timing.timeoutThreshold);
     
     this.silenceTimers.set(streamSid, silenceTimer);
     this.timeoutTimers.set(streamSid, timeoutTimer);
@@ -305,6 +327,19 @@ class VADService {
     if (gracePeriodTimer) {
       clearTimeout(gracePeriodTimer);
       this.silenceTimers.delete(`${streamSid}_grace`);
+    }
+  }
+
+  /**
+   * Update workflow type for an existing session
+   */
+  updateWorkflowType(streamSid, workflowType) {
+    const state = this.silenceStates.get(streamSid);
+    if (state) {
+      state.workflowType = workflowType;
+      if (this.config.enableVADLogging) {
+        console.log(`🔄 VAD: Updated workflow type for ${streamSid.substring(0, 8)} to: ${workflowType}`);
+      }
     }
   }
 
