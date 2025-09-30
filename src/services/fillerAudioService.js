@@ -4,10 +4,18 @@ const path = require('path');
 
 class FillerAudioService {
   constructor() {
+    // Teammate recordings directory
     this.recordingsDir = path.join(__dirname, '../audio/fillers/recordings');
     this.indexFile = path.join(this.recordingsDir, 'index.json');
+    
+    // Customer fillers directory
+    this.customerFillersDir = path.join(__dirname, '../audio/fillers/customer');
+    this.customerIndexFile = path.join(this.customerFillersDir, 'customer-fillers-mapping.json');
+    
     this.audioIndex = null;
+    this.customerFillers = null;
     this.loadAudioIndex();
+    this.loadCustomerFillers();
   }
 
   loadAudioIndex() {
@@ -15,21 +23,60 @@ class FillerAudioService {
       if (fs.existsSync(this.indexFile)) {
         const indexData = JSON.parse(fs.readFileSync(this.indexFile, 'utf8'));
         this.audioIndex = indexData;
-        console.log(`📁 Loaded ${indexData.totalRecordings} pre-recorded filler audio files`);
+        console.log(`📁 Loaded ${indexData.totalRecordings} pre-recorded teammate filler audio files`);
       } else {
-        console.log('⚠️ No audio index found. Run record-fillers.js first.');
+        console.log('⚠️ No teammate audio index found. Run record-fillers.js first.');
         this.audioIndex = null;
       }
     } catch (error) {
-      console.error('❌ Error loading audio index:', error.message);
+      console.error('❌ Error loading teammate audio index:', error.message);
       this.audioIndex = null;
     }
   }
 
-  // Get a random filler audio file for a specific category
+  loadCustomerFillers() {
+    try {
+      if (fs.existsSync(this.customerIndexFile)) {
+        const customerData = JSON.parse(fs.readFileSync(this.customerIndexFile, 'utf8'));
+        this.customerFillers = customerData;
+        const totalFillers = Object.values(customerData).reduce((sum, arr) => sum + arr.length, 0);
+        console.log(`📁 Loaded ${totalFillers} pre-recorded customer filler audio files`);
+      } else {
+        console.log('⚠️ No customer audio index found.');
+        this.customerFillers = null;
+      }
+    } catch (error) {
+      console.error('❌ Error loading customer audio index:', error.message);
+      this.customerFillers = null;
+    }
+  }
+
+  // Get a random customer filler audio for a specific category
+  getRandomCustomerFiller(category) {
+    if (!this.customerFillers || !this.customerFillers[category]) {
+      console.log(`⚠️ No customer audio files found for category: ${category}`);
+      return null;
+    }
+
+    const categoryFiles = this.customerFillers[category];
+    const randomIndex = Math.floor(Math.random() * categoryFiles.length);
+    const selectedFile = categoryFiles[randomIndex];
+
+    // Build absolute path
+    const filePath = path.join(this.customerFillersDir, selectedFile.file);
+
+    return {
+      text: selectedFile.text,
+      fileName: selectedFile.file,
+      filePath: filePath,
+      category: category
+    };
+  }
+
+  // Get a random filler audio file for a specific category (teammate)
   getRandomFillerAudio(category) {
     if (!this.audioIndex || !this.audioIndex.categories[category]) {
-      console.log(`⚠️ No audio files found for category: ${category}`);
+      console.log(`⚠️ No teammate audio files found for category: ${category}`);
       return null;
     }
 
@@ -37,10 +84,13 @@ class FillerAudioService {
     const randomIndex = Math.floor(Math.random() * categoryFiles.length);
     const selectedFile = categoryFiles[randomIndex];
 
+    // Use direct path (already absolute in index.json, but fix for current system)
+    const filePath = path.join(this.recordingsDir, selectedFile.fileName);
+
     return {
       text: selectedFile.text,
       fileName: selectedFile.fileName,
-      filePath: selectedFile.filePath,
+      filePath: filePath,
       category: category
     };
   }
@@ -66,21 +116,42 @@ class FillerAudioService {
   }
 
   // Play filler audio directly (0ms delay)
-  async playFillerAudio(fillerText, streamSid, language = 'english') {
+  async playFillerAudio(fillerText, streamSid, language = 'english', callerType = null) {
     try {
-      // Try to find exact match first
-      let audioFile = this.getFillerAudioByText(fillerText);
+      let audioFile = null;
       
-      // If no exact match, try to find by category
-      if (!audioFile) {
-        let category = this.detectCategory(fillerText);
+      // Determine caller type if not provided
+      if (!callerType && streamSid) {
+        const sessionManager = require('./sessionManager');
+        const session = sessionManager.getSession(streamSid);
+        callerType = session?.callerInfo?.type || 'customer';
+      }
+      
+      // For customers, use customer fillers
+      if (callerType === 'customer') {
+        let category = this.detectCustomerFillerCategory(fillerText);
         if (category) {
-          audioFile = this.getRandomFillerAudio(category);
+          audioFile = this.getRandomCustomerFiller(category);
+          console.log(`🎵 Using CUSTOMER filler (${category}): "${audioFile?.text}"`);
         }
+      } 
+      // For teammates, use teammate recordings
+      else if (callerType === 'teammate') {
+        // Try to find exact match first
+        audioFile = this.getFillerAudioByText(fillerText);
+        
+        // If no exact match, try to find by category
+        if (!audioFile) {
+          let category = this.detectCategory(fillerText);
+          if (category) {
+            audioFile = this.getRandomFillerAudio(category);
+          }
+        }
+        console.log(`🎵 Using TEAMMATE filler: "${audioFile?.text}"`);
       }
 
       if (audioFile && fs.existsSync(audioFile.filePath)) {
-        console.log(`🎵 Playing pre-recorded filler: "${audioFile.text}"`);
+        console.log(`🎵 Playing pre-recorded filler: "${audioFile.text}" (${callerType})`);
         
         // Play the audio file directly
         const { getCurrentMediaStream } = require('../server');
@@ -109,7 +180,7 @@ class FillerAudioService {
           return false;
         }
       } else {
-        console.log(`⚠️ No pre-recorded audio found for: "${fillerText}"`);
+        console.log(`⚠️ No pre-recorded audio found for: "${fillerText}" (${callerType})`);
         return false;
       }
     } catch (error) {
@@ -118,13 +189,50 @@ class FillerAudioService {
     }
   }
 
-  // Detect category from filler text
+  // Detect customer filler category from filler text
+  detectCustomerFillerCategory(text) {
+    const lowerText = text.toLowerCase();
+    
+    // Shift/Cancel appointment scenario
+    if (lowerText.includes('pull up') || lowerText.includes('check') || lowerText.includes('looking') || 
+        lowerText.includes('reviewing') || lowerText.includes('schedule') || lowerText.includes('appointment')) {
+      return 'shift_cancel_appointment';
+    }
+    // Search/Find/Check scenario  
+    else if (lowerText.includes('finding') || lowerText.includes('searching') || lowerText.includes('looking up')) {
+      return 'check_find_search';
+    }
+    // Booking/Creating scenario
+    else if (lowerText.includes('set') || lowerText.includes('processing') || lowerText.includes('creating') ||
+             lowerText.includes('booking') || lowerText.includes('arranging')) {
+      return 'book_schedule_create';
+    }
+    // General fallback
+    else {
+      return 'general';
+    }
+  }
+
+  // Detect category from filler text (for teammate)
   detectCategory(text) {
     const lowerText = text.toLowerCase();
     
-    if (lowerText.includes('update') || lowerText.includes('save') || lowerText.includes('processing')) {
+    // Tool execution fillers (new categories from generate-tool-fillers.js)
+    if (lowerText.includes('calling') || lowerText.includes("i'm calling") || lowerText.includes('call them') ||
+        lowerText.includes('connecting') || lowerText.includes('reach out')) {
+      return 'tool_calling';
+    } else if (lowerText.includes('sending') || lowerText.includes('send that') || lowerText.includes('notification')) {
+      return 'tool_sending';
+    } else if (lowerText.includes('updating') || lowerText.includes('update that') || lowerText.includes('making those changes')) {
+      return 'tool_updating';
+    } else if (lowerText.includes('check that') || lowerText.includes('one moment') || lowerText.includes('just a second') ||
+               lowerText.includes('analyzing') || lowerText.includes('processing')) {
+      return 'tool_processing';
+    }
+    // Legacy calendar operation fillers
+    else if (lowerText.includes('update') || lowerText.includes('save')) {
       return 'calendar_update';
-    } else if (lowerText.includes('fetch') || lowerText.includes('check') || lowerText.includes('pull up')) {
+    } else if (lowerText.includes('fetch') || lowerText.includes('pull up')) {
       return 'calendar_fetch';
     } else if (lowerText.includes('appointment') || lowerText.includes('schedule') || lowerText.includes('meeting')) {
       return 'delay_notification';

@@ -7,7 +7,9 @@
     "start": "nodemon src/server.js",
     "frontend": "cd frontend && npm run dev",
     "backend": "nodemon src/server.js",
-    "legacy": "nodemon server-azure.js"
+    "legacy": "nodemon server-azure.js",
+    "generate-tool-fillers": "node generate-tool-fillers.js",
+    "convert-customer-fillers": "node convert-customer-fillers.js"
   },
   "repository": {
     "type": "git",

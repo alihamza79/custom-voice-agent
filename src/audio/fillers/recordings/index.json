@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2025-09-26T22:51:02.433Z",
-  "totalRecordings": 15,
+  "generatedAt": "2025-09-30T16:52:56.386Z",
+  "totalRecordings": 84,
   "categories": {
     "delay_notification": [
       {
@@ -81,6 +81,129 @@
         "text": "I'm checking your calendar to get the latest appointment details",
         "fileName": "calendar_fetch_4.wav",
         "filePath": "C:\\Users\\qkhan\\OneDrive\\Desktop\\Voice_Agent\\custom-voice-agent\\src\\audio\\fillers\\recordings\\calendar_fetch_4.wav"
+      }
+    ],
+    "tool_processing": [
+      {
+        "text": "Let me check that for you real quick",
+        "fileName": "tool_processing_1.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_1.wav"
+      },
+      {
+        "text": "Give me just a moment to pull that up",
+        "fileName": "tool_processing_2.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_2.wav"
+      },
+      {
+        "text": "I'm looking that up right now",
+        "fileName": "tool_processing_3.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_3.wav"
+      },
+      {
+        "text": "Let me grab that information for you",
+        "fileName": "tool_processing_4.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_4.wav"
+      },
+      {
+        "text": "I'm checking on that as we speak",
+        "fileName": "tool_processing_5.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_5.wav"
+      },
+      {
+        "text": "Let me see what I can find here",
+        "fileName": "tool_processing_6.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_6.wav"
+      },
+      {
+        "text": "I'm pulling up those details now",
+        "fileName": "tool_processing_7.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_7.wav"
+      }
+    ],
+    "tool_calling": [
+      {
+        "text": "I'm calling them right now",
+        "fileName": "tool_calling_1.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_1.wav"
+      },
+      {
+        "text": "Let me get them on the line for you",
+        "fileName": "tool_calling_2.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_2.wav"
+      },
+      {
+        "text": "I'll give them a call right away",
+        "fileName": "tool_calling_3.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_3.wav"
+      },
+      {
+        "text": "I'm reaching out to them as we speak",
+        "fileName": "tool_calling_4.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_4.wav"
+      },
+      {
+        "text": "Let me connect with them now",
+        "fileName": "tool_calling_5.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_5.wav"
+      },
+      {
+        "text": "I'm dialing them up right now",
+        "fileName": "tool_calling_6.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_6.wav"
+      }
+    ],
+    "tool_updating": [
+      {
+        "text": "I'm updating that in the system now",
+        "fileName": "tool_updating_1.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_1.wav"
+      },
+      {
+        "text": "Let me make those changes for you",
+        "fileName": "tool_updating_2.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_2.wav"
+      },
+      {
+        "text": "I'm saving those updates to the calendar",
+        "fileName": "tool_updating_3.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_3.wav"
+      },
+      {
+        "text": "I'm processing that update right now",
+        "fileName": "tool_updating_4.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_4.wav"
+      },
+      {
+        "text": "Let me get that updated for you",
+        "fileName": "tool_updating_5.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_5.wav"
+      }
+    ],
+    "tool_sending": [
+      {
+        "text": "I'm sending that message right now",
+        "fileName": "tool_sending_1.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_1.wav"
+      },
+      {
+        "text": "Let me shoot that text over to them",
+        "fileName": "tool_sending_2.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_2.wav"
+      },
+      {
+        "text": "I'm sending that notification as we speak",
+        "fileName": "tool_sending_3.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_3.wav"
+      },
+      {
+        "text": "I'll get that message sent right away",
+        "fileName": "tool_sending_4.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_4.wav"
+      },
+      {
+        "text": "I'm texting them that update now",
+        "fileName": "tool_sending_5.wav",
+        "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_5.wav"
       }
     ]
   },
@@ -174,6 +297,420 @@
       "fileName": "calendar_fetch_4.wav",
       "filePath": "C:\\Users\\qkhan\\OneDrive\\Desktop\\Voice_Agent\\custom-voice-agent\\src\\audio\\fillers\\recordings\\calendar_fetch_4.wav",
       "category": "calendar_fetch"
+    },
+    {
+      "text": "Let me check that for you",
+      "fileName": "tool_processing_1.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_1.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "One moment please",
+      "fileName": "tool_processing_2.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_2.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "Just a second",
+      "fileName": "tool_processing_3.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_3.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "Let me process that information",
+      "fileName": "tool_processing_4.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_4.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "I'm analyzing that now",
+      "fileName": "tool_processing_5.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_5.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "Give me just a moment",
+      "fileName": "tool_processing_6.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_6.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "Processing your request",
+      "fileName": "tool_processing_7.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_7.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "I'm calling them now",
+      "fileName": "tool_calling_1.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_1.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "Let me call them",
+      "fileName": "tool_calling_2.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_2.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "Calling now",
+      "fileName": "tool_calling_3.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_3.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "I'll make that call right away",
+      "fileName": "tool_calling_4.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_4.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "Connecting to the customer now",
+      "fileName": "tool_calling_5.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_5.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "Let me reach out to them",
+      "fileName": "tool_calling_6.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_6.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "Let me update that",
+      "fileName": "tool_updating_1.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_1.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "Updating the appointment",
+      "fileName": "tool_updating_2.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_2.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "I'm updating the calendar",
+      "fileName": "tool_updating_3.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_3.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "Making those changes now",
+      "fileName": "tool_updating_4.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_4.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "Updating that for you",
+      "fileName": "tool_updating_5.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_5.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "I'll send that message",
+      "fileName": "tool_sending_1.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_1.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "Sending the update",
+      "fileName": "tool_sending_2.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_2.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "Sending that notification now",
+      "fileName": "tool_sending_3.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_3.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "I'm sending the message",
+      "fileName": "tool_sending_4.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_4.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "Let me send that right away",
+      "fileName": "tool_sending_5.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_5.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "Let me check that for you real quick",
+      "fileName": "tool_processing_1.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_1.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "Give me just a moment to pull that up",
+      "fileName": "tool_processing_2.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_2.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "I'm looking that up right now",
+      "fileName": "tool_processing_3.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_3.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "Let me grab that information for you",
+      "fileName": "tool_processing_4.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_4.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "I'm checking on that as we speak",
+      "fileName": "tool_processing_5.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_5.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "Let me see what I can find here",
+      "fileName": "tool_processing_6.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_6.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "I'm pulling up those details now",
+      "fileName": "tool_processing_7.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_7.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "I'm calling them right now",
+      "fileName": "tool_calling_1.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_1.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "Let me get them on the line for you",
+      "fileName": "tool_calling_2.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_2.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "I'll give them a call right away",
+      "fileName": "tool_calling_3.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_3.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "I'm reaching out to them as we speak",
+      "fileName": "tool_calling_4.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_4.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "Let me connect with them now",
+      "fileName": "tool_calling_5.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_5.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "I'm dialing them up right now",
+      "fileName": "tool_calling_6.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_6.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "I'm updating that in the system now",
+      "fileName": "tool_updating_1.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_1.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "Let me make those changes for you",
+      "fileName": "tool_updating_2.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_2.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "I'm saving those updates to the calendar",
+      "fileName": "tool_updating_3.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_3.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "I'm processing that update right now",
+      "fileName": "tool_updating_4.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_4.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "Let me get that updated for you",
+      "fileName": "tool_updating_5.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_5.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "I'm sending that message right now",
+      "fileName": "tool_sending_1.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_1.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "Let me shoot that text over to them",
+      "fileName": "tool_sending_2.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_2.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "I'm sending that notification as we speak",
+      "fileName": "tool_sending_3.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_3.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "I'll get that message sent right away",
+      "fileName": "tool_sending_4.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_4.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "I'm texting them that update now",
+      "fileName": "tool_sending_5.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_5.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "Let me check that for you real quick",
+      "fileName": "tool_processing_1.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_1.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "Give me just a moment to pull that up",
+      "fileName": "tool_processing_2.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_2.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "I'm looking that up right now",
+      "fileName": "tool_processing_3.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_3.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "Let me grab that information for you",
+      "fileName": "tool_processing_4.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_4.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "I'm checking on that as we speak",
+      "fileName": "tool_processing_5.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_5.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "Let me see what I can find here",
+      "fileName": "tool_processing_6.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_6.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "I'm pulling up those details now",
+      "fileName": "tool_processing_7.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_processing_7.wav",
+      "category": "tool_processing"
+    },
+    {
+      "text": "I'm calling them right now",
+      "fileName": "tool_calling_1.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_1.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "Let me get them on the line for you",
+      "fileName": "tool_calling_2.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_2.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "I'll give them a call right away",
+      "fileName": "tool_calling_3.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_3.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "I'm reaching out to them as we speak",
+      "fileName": "tool_calling_4.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_4.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "Let me connect with them now",
+      "fileName": "tool_calling_5.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_5.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "I'm dialing them up right now",
+      "fileName": "tool_calling_6.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_calling_6.wav",
+      "category": "tool_calling"
+    },
+    {
+      "text": "I'm updating that in the system now",
+      "fileName": "tool_updating_1.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_1.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "Let me make those changes for you",
+      "fileName": "tool_updating_2.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_2.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "I'm saving those updates to the calendar",
+      "fileName": "tool_updating_3.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_3.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "I'm processing that update right now",
+      "fileName": "tool_updating_4.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_4.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "Let me get that updated for you",
+      "fileName": "tool_updating_5.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_updating_5.wav",
+      "category": "tool_updating"
+    },
+    {
+      "text": "I'm sending that message right now",
+      "fileName": "tool_sending_1.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_1.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "Let me shoot that text over to them",
+      "fileName": "tool_sending_2.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_2.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "I'm sending that notification as we speak",
+      "fileName": "tool_sending_3.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_3.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "I'll get that message sent right away",
+      "fileName": "tool_sending_4.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_4.wav",
+      "category": "tool_sending"
+    },
+    {
+      "text": "I'm texting them that update now",
+      "fileName": "tool_sending_5.wav",
+      "filePath": "/Users/alihamza/Desktop/Voice_Agent/custom-voice-agent/src/audio/fillers/recordings/tool_sending_5.wav",
+      "category": "tool_sending"
     }
   ]
 }
