@@ -14,13 +14,24 @@ class LanguageStateService {
   initializeCall(streamSid, initialLanguage = 'english') {
     console.log(`🌐 Initializing language state for call: ${streamSid}`);
     
+    // Check if this is a delay notification call - force English
+    const sessionManager = require('./sessionManager');
+    const session = sessionManager.getSession(streamSid);
+    const isDelayNotification = session?.callerInfo?.isDelayNotification;
+    
+    if (isDelayNotification) {
+      console.log(`🌐 [DELAY_NOTIFICATION] Forcing English language for delay notification call`);
+      initialLanguage = 'english';
+    }
+    
     this.callLanguages.set(streamSid, {
       currentLanguage: initialLanguage,
       confidence: 0.5,
       lastUpdated: Date.now(),
       isStable: false, // becomes true after consistent detection
       isLocked: false, // becomes true after first user utterance
-      firstUtteranceProcessed: false // tracks if we've processed first utterance
+      firstUtteranceProcessed: false, // tracks if we've processed first utterance
+      isDelayNotification: isDelayNotification // track if this is a delay notification call
     });
     
     this.languageHistory.set(streamSid, [{
@@ -39,6 +50,13 @@ class LanguageStateService {
       console.warn(`🌐 No language state found for ${streamSid}, initializing...`);
       this.initializeCall(streamSid);
       return this.callLanguages.get(streamSid).currentLanguage;
+    }
+
+    // For delay notification calls, force English
+    if (currentState.isDelayNotification) {
+      console.log(`🌐 [DELAY_NOTIFICATION] Forcing English language detection for delay notification call`);
+      const detectedLanguage = 'english';
+      return this.updateLanguageState(streamSid, detectedLanguage, 1.0, source, transcript);
     }
 
     // Detect language from transcript

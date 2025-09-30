@@ -256,28 +256,44 @@ Keep it conversational, warm, and natural. DO NOT apologize excessively.`;
         return;
       }
       
-      // Parse the new time from delayData based on customer's choice
+      // Get the new time in ISO format based on customer's choice
+      let newStartTimeISO;
       let newTimeString;
+      
       if (choice === 'wait') {
-        newTimeString = delayData.waitOption; // e.g., "Tuesday, October 14 at 05:30 AM"
+        newStartTimeISO = delayData.waitOptionISO; // ISO format
+        newTimeString = delayData.waitOption; // Human-readable
       } else if (choice === 'alternative') {
-        newTimeString = delayData.alternativeOption; // e.g., "6:00 PM today"
+        newStartTimeISO = delayData.alternativeOptionISO; // ISO format
+        newTimeString = delayData.alternativeOption; // Human-readable
       }
 
-      console.log(`📅 [CUSTOMER_DELAY] Updating ${delayData.appointmentSummary} (ID: ${delayData.appointmentId}) to ${newTimeString}`);
+      console.log(`📅 [CUSTOMER_DELAY] Updating ${delayData.appointmentSummary} (ID: ${delayData.appointmentId})`);
+      console.log(`📅 [CUSTOMER_DELAY] New time: ${newTimeString} (${newStartTimeISO})`);
       
-      // Parse the new time string to ISO format
-      // For now, we'll just log this - you'll need to implement proper date parsing
-      // based on how your system formats these options
-      console.log(`📅 [CUSTOMER_DELAY] ⚠️ Calendar update requires date parsing implementation`);
-      console.log(`📅 [CUSTOMER_DELAY] Appointment ID: ${delayData.appointmentId}`);
-      console.log(`📅 [CUSTOMER_DELAY] New time: ${newTimeString}`);
+      // Calculate end time (add appointment duration)
+      const originalStart = new Date(delayData.originalStartTime);
+      const originalEnd = new Date(delayData.originalEndTime);
+      const durationMs = originalEnd.getTime() - originalStart.getTime();
       
-      // TODO: Implement date parsing and call:
-      // await googleCalendarService.updateAppointment(delayData.appointmentId, {
-      //   start: { dateTime: newStartISO },
-      //   end: { dateTime: newEndISO }
-      // });
+      const newStart = new Date(newStartTimeISO);
+      const newEnd = new Date(newStart.getTime() + durationMs);
+
+      console.log(`📅 [CUSTOMER_DELAY] Calling Google Calendar API to update appointment...`);
+      
+      // Update the calendar via Google Calendar service
+      await googleCalendarService.updateAppointment(delayData.appointmentId, {
+        start: { 
+          dateTime: newStart.toISOString(),
+          timeZone: 'UTC'
+        },
+        end: { 
+          dateTime: newEnd.toISOString(),
+          timeZone: 'UTC'
+        }
+      });
+      
+      console.log(`✅ [CUSTOMER_DELAY] Calendar updated successfully!`);
       
     } catch (error) {
       console.error(`❌ [CUSTOMER_DELAY] Failed to update calendar:`, error);

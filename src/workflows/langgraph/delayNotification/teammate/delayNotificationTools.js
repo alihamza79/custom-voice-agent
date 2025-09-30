@@ -1,12 +1,12 @@
 // Delay Notification Tools for LangGraph
 const { DynamicStructuredTool, DynamicTool } = require("@langchain/core/tools");
 const { z } = require("zod");
-const googleCalendarService = require('../../services/googleCalendarService');
-const outboundCallSession = require('../../services/outboundCallSession');
-const smsService = require('../../services/smsService');
-const sessionManager = require('../../services/sessionManager');
-const fillerAudioService = require('../../services/fillerAudioService');
-const { createAppointmentTimer } = require('../../utils/appointmentTimingLogger');
+const googleCalendarService = require('../../../../services/googleCalendarService');
+const outboundCallSession = require('../../../../services/outboundCallSession');
+const smsService = require('../../../../services/smsService');
+const sessionManager = require('../../../../services/sessionManager');
+const fillerAudioService = require('../../../../services/fillerAudioService');
+const { createAppointmentTimer } = require('../../../../utils/appointmentTimingLogger');
 
 // Helper function to play filler audio before tool execution
 async function playFillerBeforeTool(streamSid, context = 'processing') {
@@ -208,20 +208,55 @@ Respond with ONLY a JSON object.`;
       customerName: z.string().describe("Customer's name"),
       appointmentId: z.string().describe("The appointment ID from lookup_appointment_by_customer tool"),
       appointmentSummary: z.string().describe("Appointment title/summary"),
+      originalStartTime: z.string().describe("Original appointment start time in ISO format"),
+      originalEndTime: z.string().describe("Original appointment end time in ISO format"),
       delayMinutes: z.number().describe("Minutes of delay"),
-      waitOption: z.string().describe("New time if they wait (formatted)"),
-      alternativeOption: z.string().describe("Alternative time offered (formatted)"),
+      waitOption: z.string().describe("New time if they wait (formatted for speech)"),
+      waitOptionISO: z.string().describe("New start time if they wait (ISO format for calendar update)"),
+      alternativeOption: z.string().describe("Alternative time offered (formatted for speech)"),
+      alternativeOptionISO: z.string().describe("Alternative time in ISO format for calendar update"),
     }),
-    func: async ({ customerName, appointmentId, appointmentSummary, delayMinutes, waitOption, alternativeOption }) => {
+    func: async ({ customerName, appointmentId, appointmentSummary, originalStartTime, originalEndTime, delayMinutes, waitOption, waitOptionISO, alternativeOption, alternativeOptionISO }) => {
       const timer = createAppointmentTimer(streamSid);
       timer.checkpoint('outbound_call_start', 'Initiating outbound call to customer');
+      
+      // Debug: Log the values being passed
+      console.log(`🔍 [MAKE_OUTBOUND_CALL] Debug values:`, {
+        customerName,
+        appointmentId,
+        appointmentSummary,
+        originalStartTime,
+        originalEndTime,
+        delayMinutes,
+        waitOption,
+        waitOptionISO,
+        alternativeOption,
+        alternativeOptionISO
+      });
+      
+      // Validate ISO timestamps
+      if (!originalStartTime || !originalStartTime.includes('T')) {
+        console.error(`❌ [MAKE_OUTBOUND_CALL] Invalid originalStartTime: ${originalStartTime}`);
+        return JSON.stringify({
+          success: false,
+          error: `Invalid originalStartTime format: ${originalStartTime}. Must be ISO format with time.`
+        });
+      }
+      
+      if (!originalEndTime || !originalEndTime.includes('T')) {
+        console.error(`❌ [MAKE_OUTBOUND_CALL] Invalid originalEndTime: ${originalEndTime}`);
+        return JSON.stringify({
+          success: false,
+          error: `Invalid originalEndTime format: ${originalEndTime}. Must be ISO format with time.`
+        });
+      }
       
       // Play filler before calling
       await playFillerBeforeTool(streamSid, 'calling');
       
       try {
         // Get customer phone from phonebook
-        const phonebook = require('../../../phonebook.json');
+        const phonebook = require('../../../../../phonebook.json');
         const customerEntry = Object.entries(phonebook).find(([phone, info]) => 
           info.name.toLowerCase() === customerName.toLowerCase() && info.type === 'customer'
         );
@@ -241,12 +276,19 @@ Respond with ONLY a JSON object.`;
           customerName,
           appointmentId, // Include appointment ID for calendar updates
           appointmentSummary,
+          originalStartTime,
+          originalEndTime,
           delayMinutes,
-          waitOption,
-          alternativeOption,
+          waitOption, // Human-readable format for speech
+          waitOptionISO, // ISO format for calendar update
+          alternativeOption, // Human-readable format for speech
+          alternativeOptionISO, // ISO format for calendar update
           status: 'calling',
-          teammateStreamSid: streamSid // Reference back to teammate session
+          teammateStreamSid: streamSid, // Reference back to teammate session
+          teammatePhone: sessionManager.getSession(streamSid)?.callerInfo?.phoneNumber // CRITICAL: Store teammate phone for SMS
         };
+        
+        console.log(`📞 [MAKE_OUTBOUND_CALL] Teammate phone stored in delayData:`, delayData.teammatePhone);
         
         // Store call data in teammate session
         sessionManager.setDelayCallData(streamSid, delayData);

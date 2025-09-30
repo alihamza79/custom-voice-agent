@@ -66,14 +66,15 @@ async function processUtterance(utterance, mediaStream) {
               mediaStream.streamSid,
               utterance
             );
-          } else if (session.langChainSession.workflowType === 'customer_delay_response' && 
-                     session.langChainSession.workflowActive) {
-            // Customer delay response workflow (CUSTOMER side)
-            const customerDelayWorkflow = require('../workflows/CustomerDelayResponseWorkflow');
-            workflowResult = await customerDelayWorkflow.processResponse(
-              mediaStream.streamSid,
-              utterance
-            );
+        } else if ((session.langChainSession.workflowType === 'customer_delay_response' || 
+                    session.langChainSession.workflowType === 'customer_delay_graph') && 
+                   session.langChainSession.workflowActive) {
+          // Customer delay response workflow (CUSTOMER side) - LangGraph-based
+          const customerDelayGraphHandler = require('../workflows/CustomerDelayGraphHandler');
+          workflowResult = await customerDelayGraphHandler.continueWorkflow(
+            mediaStream.streamSid,
+            utterance
+          );
           } else {
             // Fallback for other workflow types
             workflowResult = {

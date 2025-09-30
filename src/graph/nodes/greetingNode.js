@@ -56,8 +56,9 @@ const greetingNode = RunnableLambda.from(async (state) => {
         console.log('✅ [DELAY_NOTIFICATION] Delay data found, starting customer workflow');
         
         // Start customer delay response workflow
-        const customerDelayWorkflow = require('../../workflows/CustomerDelayResponseWorkflow');
-        const workflowResult = await customerDelayWorkflow.startWorkflow(state.streamSid, delayData);
+        // Start customer delay workflow (LangGraph-based)
+        const customerDelayGraphHandler = require('../../workflows/CustomerDelayGraphHandler');
+        const workflowResult = await customerDelayGraphHandler.startWorkflow(state.streamSid, delayData);
         
         console.log('✅ [DELAY_NOTIFICATION] Customer workflow started, greeting:', workflowResult.response);
         

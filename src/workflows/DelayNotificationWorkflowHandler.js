@@ -1,6 +1,6 @@
 // Delay Notification Workflow Handler - Main handler for teammate delay notifications
 const { HumanMessage } = require("@langchain/core/messages");
-const { createDelayNotificationGraph } = require('./langgraph/delayNotificationGraph');
+const { createDelayNotificationGraph } = require('./langgraph/delayNotification/teammate/delayNotificationGraph');
 const { globalTimingLogger } = require('../utils/timingLogger');
 const sessionManager = require('../services/sessionManager');
 
