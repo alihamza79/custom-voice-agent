@@ -203,13 +203,13 @@ Respond with ONLY a JSON object.`;
   // Tool 4: Make outbound call to customer
   const makeOutboundCallTool = new DynamicStructuredTool({
     name: "make_outbound_call",
-    description: "Initiate an outbound call to the customer with the delay options.",
+    description: "Initiate an outbound call to the customer with the delay options. IMPORTANT: Use the exact 'start' and 'end' values from lookup_appointment_by_customer result for originalStartTime and originalEndTime.",
     schema: z.object({
       customerName: z.string().describe("Customer's name"),
       appointmentId: z.string().describe("The appointment ID from lookup_appointment_by_customer tool"),
       appointmentSummary: z.string().describe("Appointment title/summary"),
-      originalStartTime: z.string().describe("Original appointment start time in ISO format"),
-      originalEndTime: z.string().describe("Original appointment end time in ISO format"),
+      originalStartTime: z.string().describe("Original appointment start time in ISO format (use exact 'start' field from lookup_appointment_by_customer)"),
+      originalEndTime: z.string().describe("Original appointment end time in ISO format (use exact 'end' field from lookup_appointment_by_customer)"),
       delayMinutes: z.number().describe("Minutes of delay"),
       waitOption: z.string().describe("New time if they wait (formatted for speech)"),
       waitOptionISO: z.string().describe("New start time if they wait (ISO format for calendar update)"),
@@ -234,20 +234,69 @@ Respond with ONLY a JSON object.`;
         alternativeOptionISO
       });
       
-      // Validate ISO timestamps
+      // AUTO-FIX: If LLM passed date-only format, look up the appointment to get full datetime
       if (!originalStartTime || !originalStartTime.includes('T')) {
-        console.error(`❌ [MAKE_OUTBOUND_CALL] Invalid originalStartTime: ${originalStartTime}`);
+        console.warn(`⚠️ [MAKE_OUTBOUND_CALL] Invalid originalStartTime format, looking up appointment: ${originalStartTime}`);
+        
+        try {
+          const session = sessionManager.getSession(streamSid);
+          let appointments = session?.preloadedAppointments;
+          
+          if (!appointments) {
+            appointments = await googleCalendarService.getAppointments({ phoneNumber: 'unknown' });
+          }
+          
+          const appointment = appointments.find(apt => apt.id === appointmentId);
+          
+          if (appointment) {
+            // Handle both all-day events (date) and timed events (dateTime)
+            originalStartTime = appointment.start.dateTime || appointment.start.date;
+            originalEndTime = appointment.end.dateTime || appointment.end.date;
+            
+            // If it's a date-only (all-day event), convert to datetime
+            if (originalStartTime && !originalStartTime.includes('T')) {
+              originalStartTime = `${originalStartTime}T12:00:00.000Z`; // Default to noon
+              console.log(`📅 [MAKE_OUTBOUND_CALL] Converting all-day event to timed: ${originalStartTime}`);
+            }
+            if (originalEndTime && !originalEndTime.includes('T')) {
+              originalEndTime = `${originalEndTime}T13:00:00.000Z`; // Default to 1 hour duration
+              console.log(`📅 [MAKE_OUTBOUND_CALL] Converting all-day event to timed: ${originalEndTime}`);
+            }
+            
+            console.log(`✅ [MAKE_OUTBOUND_CALL] Auto-corrected times from appointment lookup:`, {
+              originalStartTime,
+              originalEndTime
+            });
+          } else {
+            console.error(`❌ [MAKE_OUTBOUND_CALL] Cannot find appointment with ID: ${appointmentId}`);
+            return JSON.stringify({
+              success: false,
+              error: `Could not find appointment details for ${appointmentSummary}. Please try again.`
+            });
+          }
+        } catch (error) {
+          console.error(`❌ [MAKE_OUTBOUND_CALL] Error auto-correcting times:`, error.message);
+          return JSON.stringify({
+            success: false,
+            error: `Invalid appointment time format. Please provide the appointment details again.`
+          });
+        }
+      }
+      
+      // Validate ISO timestamps after auto-correction
+      if (!originalStartTime || !originalStartTime.includes('T')) {
+        console.error(`❌ [MAKE_OUTBOUND_CALL] Still invalid originalStartTime after correction: ${originalStartTime}`);
         return JSON.stringify({
           success: false,
-          error: `Invalid originalStartTime format: ${originalStartTime}. Must be ISO format with time.`
+          error: `Invalid appointment time. Please provide the appointment details again.`
         });
       }
       
       if (!originalEndTime || !originalEndTime.includes('T')) {
-        console.error(`❌ [MAKE_OUTBOUND_CALL] Invalid originalEndTime: ${originalEndTime}`);
+        console.error(`❌ [MAKE_OUTBOUND_CALL] Still invalid originalEndTime after correction: ${originalEndTime}`);
         return JSON.stringify({
           success: false,
-          error: `Invalid originalEndTime format: ${originalEndTime}. Must be ISO format with time.`
+          error: `Invalid appointment time. Please provide the appointment details again.`
         });
       }
       

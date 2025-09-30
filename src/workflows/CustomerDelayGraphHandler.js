@@ -183,42 +183,23 @@ class CustomerDelayGraphHandler {
     }
 
     console.log(`🎯 [CUSTOMER_DELAY_GRAPH] Setting isEnding flag - call will end after TTS completes`);
-    console.log(`🔚 [CUSTOMER_DELAY_GRAPH] TTS will complete in approximately 1500ms (1.5s)`);
-    console.log(`🔚 [CUSTOMER_DELAY_GRAPH] Will terminate call via Twilio API`);
+    console.log(`🔚 [CUSTOMER_DELAY_GRAPH] TTS will complete in approximately 7000ms (7s) - allowing full sentence`);
+    console.log(`🔚 [CUSTOMER_DELAY_GRAPH] Will close WebSocket connection to end call gracefully`);
     console.log(`🔚 [CUSTOMER_DELAY_GRAPH] Set session isEnding=true to prevent TwiML reconnection`);
 
-    // Terminate call after TTS completes
-    setTimeout(async () => {
-      console.log(`🔚 [CUSTOMER_DELAY_GRAPH] Terminating Twilio call now`);
+    // Terminate call after TTS completes by closing WebSocket
+    // CRITICAL: Allow enough time for bot to finish speaking (7 seconds)
+    // This method ends gracefully without Twilio error message
+    setTimeout(() => {
+      console.log(`🔚 [CUSTOMER_DELAY_GRAPH] Closing WebSocket connection after TTS delay`);
       
-      // Get the real CallSid from session (not streamSid)
-      const session = sessionManager.getSession(streamSid);
-      const realCallSid = session?.callerInfo?.callSid;
-      
-      if (!realCallSid) {
-        console.error(`❌ [CUSTOMER_DELAY_GRAPH] No CallSid found, closing WebSocket as fallback`);
-        if (mediaStream.connection && mediaStream.connection.readyState === 1) {
-          mediaStream.connection.close();
-        }
-        return;
+      if (mediaStream.connection && !mediaStream.connection.closed) {
+        console.log(`🔚 [CUSTOMER_DELAY_GRAPH] Closing WebSocket - this will end the Twilio call gracefully`);
+        mediaStream.connection.close();
+      } else {
+        console.log(`🔚 [CUSTOMER_DELAY_GRAPH] WebSocket already closed`);
       }
-      
-      // Get call termination service
-      const callTerminationService = require('../services/callTerminationService');
-      
-      // End the call via Twilio using the real CallSid
-      try {
-        await callTerminationService.endCall(realCallSid);
-        console.log(`✅ [CUSTOMER_DELAY_GRAPH] Twilio call terminated successfully`);
-      } catch (error) {
-        console.error(`❌ [CUSTOMER_DELAY_GRAPH] Error terminating call:`, error.message);
-        // Fallback: close WebSocket manually
-        if (mediaStream.connection && mediaStream.connection.readyState === 1) {
-          mediaStream.connection.close();
-          console.log(`🔚 [CUSTOMER_DELAY_GRAPH] WebSocket closed as fallback`);
-        }
-      }
-    }, 1500); // Reduced from 3000ms to 1500ms for faster call termination
+    }, 7000); // Allow 7 seconds for bot to finish speaking
   }
 }
 

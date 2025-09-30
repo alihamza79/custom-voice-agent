@@ -20,11 +20,11 @@ const openai = new OpenAI();
 function generateTeammateResponse(intent, transcript, language) {
   const responses = {
     english: {
-      delay_notification: "I'll help you delay an appointment. Let me check your current meetings and we can reschedule them.",
-      schedule_meeting: "I can help you schedule a new meeting. What would you like to arrange?",
-      check_schedule: "Let me pull up your schedule and show you what's available.",
-      team_coordination: "I'll help you coordinate with the team. What do you need assistance with?",
-      no_intent_detected: "Hi! How can I assist you with your team tasks today?"
+      delay_notification: "I'll help you notify customers about delays. Which customer and appointment?",
+      schedule_meeting: "I can help with scheduling. What would you like to do?",
+      check_schedule: "Let me check your schedule.",
+      team_coordination: "I'll help you coordinate with the team. What do you need?",
+      no_intent_detected: "Hi! I can help you notify customers about delays or check your schedule. What do you need?"
     },
     hindi: {
       delay_notification: "Main aapki appointment delay karne mein madad kar sakta hun. Aapke current meetings check karta hun.",
