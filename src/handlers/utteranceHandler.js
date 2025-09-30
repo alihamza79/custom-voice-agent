@@ -49,24 +49,16 @@ async function processUtterance(utterance, mediaStream) {
           
           // Get the correct workflow function based on handler type or workflowType
           let workflowResult;
-          if (session.langChainSession.handler === 'delayNotificationWorkflow') {
-            // OLD delay workflow (kept for backward compatibility)
-            const { continueDelayWorkflow } = require('../workflows/TeamDelayWorkflow');
-            workflowResult = await continueDelayWorkflow(
-              mediaStream.streamSid,
-              utterance,
-              session.langChainSession.workflowData
-            );
-          } else if (session.langChainSession.workflowType === 'delay_notification' && 
-                     session.langChainSession.workflowActive) {
-            // NEW LangGraph delay workflow (TEAMMATE side)
+          if (session.langChainSession.workflowType === 'delay_notification' && 
+              session.langChainSession.workflowActive) {
+            // LangGraph delay workflow (TEAMMATE side)
             const DelayNotificationWorkflowHandler = require('../workflows/DelayNotificationWorkflowHandler');
             const delayHandler = new DelayNotificationWorkflowHandler();
             workflowResult = await delayHandler.continueWorkflow(
               mediaStream.streamSid,
               utterance
             );
-        } else if ((session.langChainSession.workflowType === 'customer_delay_response' || 
+          } else if ((session.langChainSession.workflowType === 'customer_delay_response' || 
                    session.langChainSession.workflowType === 'customer_delay_graph') && 
                   session.langChainSession.workflowActive) {
           // Customer delay response workflow (CUSTOMER side) - LangGraph-based

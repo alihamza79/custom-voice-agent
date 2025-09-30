@@ -2,7 +2,6 @@
  * Customer Delay Graph Handler
  * 
  * This handler manages the LangGraph-based workflow for customer delay responses.
- * It replaces the old CustomerDelayResponseWorkflow with a more flexible LangGraph approach.
  */
 
 const { HumanMessage, AIMessage } = require("@langchain/core/messages");

@@ -6,12 +6,11 @@ const performanceLogger = require('../../utils/performanceLogger');
 const sessionManager = require('../../services/sessionManager');
 const googleCalendarService = require('../../services/googleCalendarService');
 const calendarPreloader = require('../../services/calendarPreloader');
-const { delayNotificationWorkflow } = require('../../workflows/TeamDelayWorkflow'); // OLD - kept for backward compat
-const DelayNotificationWorkflowHandler = require('../../workflows/DelayNotificationWorkflowHandler'); // NEW LangGraph
+const DelayNotificationWorkflowHandler = require('../../workflows/DelayNotificationWorkflowHandler'); // LangGraph-based
 const teamAnnouncementWorkflow = require('../../workflows/TeamAnnouncementWorkflow');
 const fillerAudioService = require('../../services/fillerAudioService');
 
-// Initialize the new LangGraph delay notification handler
+// Initialize the LangGraph delay notification handler
 const delayNotificationHandler = new DelayNotificationWorkflowHandler();
 
 const openai = new OpenAI();
@@ -104,22 +103,12 @@ const teammateIntentNode = RunnableLambda.from(async (state) => {
       
       // Check which workflow type is active
       if (session.langChainSession.workflowType === 'delay_notification') {
-        // NEW LangGraph delay notification workflow
-        console.log('🔄 Continuing NEW LangGraph delay notification workflow');
+        // LangGraph delay notification workflow
+        console.log('🔄 Continuing LangGraph delay notification workflow');
         const delayHandler = new DelayNotificationWorkflowHandler();
         workflowResult = await delayHandler.continueWorkflow(
           state.streamSid,
           state.transcript
-        );
-      } else if (session.langChainSession.handler === 'delayNotificationWorkflow') {
-        // OLD delay workflow (backward compatibility)
-        console.log('🔄 Continuing OLD delay notification workflow');
-        const { continueDelayWorkflow } = require('../../workflows/TeamDelayWorkflow');
-        let workflowDataFromSession = session.langChainSession.workflowData || {};
-        workflowResult = await continueDelayWorkflow(
-          state.streamSid,
-          state.transcript,
-          workflowDataFromSession
         );
       } else {
         // Unknown workflow type

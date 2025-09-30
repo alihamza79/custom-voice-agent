@@ -29,14 +29,14 @@ async function buildCallerGraph() {
       }
       
       // Check if this is an outbound call (but NOT a delay notification call)
-      // Delay notification calls are handled directly in greetingNode via CustomerDelayResponseWorkflow
+      // Delay notification calls are handled directly in greetingNode via CustomerDelayGraphHandler
       if (state.callerInfo && state.callerInfo.isOutbound && !state.callerInfo.isDelayNotification) {
         console.log('📞 Routing outbound call to customer verification');
         return "outboundCustomerVerifyIntentNode";
       }
       
       // If this is a delay notification outbound call, END the graph
-      // CustomerDelayResponseWorkflow will handle all interactions via utteranceHandler
+      // CustomerDelayGraphHandler will handle all interactions via utteranceHandler
       if (state.callerInfo && state.callerInfo.isOutbound && state.callerInfo.isDelayNotification) {
         console.log('📞 [DELAY_NOTIFICATION] Greeting sent - ending graph, workflow will handle via utteranceHandler');
         return END;
