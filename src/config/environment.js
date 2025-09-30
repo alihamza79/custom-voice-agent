@@ -23,6 +23,15 @@ const optionalEnvVars = {
   SMS_PHONE_NUMBER: process.env.SMS_PHONE_NUMBER || '+4915888648880',
   TEAMMATE_PHONE_NUMBER: process.env.TEAMMATE_PHONE_NUMBER || '+491726073488',
   TWILIO_SMS_ENABLED: process.env.TWILIO_SMS_ENABLED === 'true',
+  // Google Calendar Configuration (loaded in googleCalendarService.js)
+  GOOGLE_CALENDAR_CREDENTIALS: process.env.GOOGLE_CALENDAR_CREDENTIALS,
+  GOOGLE_SERVICE_ACCOUNT_EMAIL: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+  GOOGLE_PRIVATE_KEY: process.env.GOOGLE_PRIVATE_KEY,
+  GOOGLE_PROJECT_ID: process.env.GOOGLE_PROJECT_ID,
+  GOOGLE_PRIVATE_KEY_ID: process.env.GOOGLE_PRIVATE_KEY_ID,
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_CERT_URL: process.env.GOOGLE_CLIENT_CERT_URL,
+  GOOGLE_CALENDAR_ID: process.env.GOOGLE_CALENDAR_ID,
 };
 
 // Check for missing required environment variables

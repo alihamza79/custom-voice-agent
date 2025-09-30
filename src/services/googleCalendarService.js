@@ -29,18 +29,54 @@ class GoogleCalendarService {
 
   async initializeAuth() {
     try {
-      const credentialsPath = path.join(__dirname, '../config/calender-agent.json');
+      let credentials;
 
-      if (!fs.existsSync(credentialsPath)) {
-        console.error('❌ Google credentials file not found at:', credentialsPath);
-        console.error('Please download service account key from Google Cloud Console and place it there.');
-        return false;
+      // Priority 1: Try to load from environment variables (for production/deployment)
+      if (process.env.GOOGLE_CALENDAR_CREDENTIALS) {
+        console.log('🔐 Loading Google Calendar credentials from environment variable');
+        try {
+          credentials = JSON.parse(process.env.GOOGLE_CALENDAR_CREDENTIALS);
+          console.log('✅ Credentials loaded from GOOGLE_CALENDAR_CREDENTIALS env var');
+        } catch (parseError) {
+          console.error('❌ Failed to parse GOOGLE_CALENDAR_CREDENTIALS:', parseError.message);
+          throw new Error('Invalid JSON in GOOGLE_CALENDAR_CREDENTIALS environment variable');
+        }
+      }
+      // Priority 2: Try to construct from individual environment variables
+      else if (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
+        console.log('🔐 Constructing Google Calendar credentials from individual env vars');
+        credentials = {
+          type: 'service_account',
+          project_id: process.env.GOOGLE_PROJECT_ID || 'calender-471613',
+          private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID,
+          private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'), // Handle escaped newlines
+          client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+          client_id: process.env.GOOGLE_CLIENT_ID,
+          auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+          token_uri: 'https://oauth2.googleapis.com/token',
+          auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
+          client_x509_cert_url: process.env.GOOGLE_CLIENT_CERT_URL,
+          universe_domain: 'googleapis.com'
+        };
+        console.log('✅ Credentials constructed from individual env vars');
+      }
+      // Priority 3: Fall back to local file (for development)
+      else {
+        const credentialsPath = path.join(__dirname, '../config/calender-agent.json');
+        
+        if (!fs.existsSync(credentialsPath)) {
+          console.error('❌ Google credentials not found in environment variables or file');
+          console.error('Please set GOOGLE_CALENDAR_CREDENTIALS or GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY');
+          console.error('Or place calender-agent.json at:', credentialsPath);
+          return false;
+        }
+
+        console.log('🔐 Loading Google Calendar credentials from local file (development mode)');
+        credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
+        console.log('✅ Credentials loaded from local file');
       }
 
-      const credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
-
       // Create GoogleAuth client for service account authentication
-      // This approach works better with the credentials object
       this.auth = new google.auth.GoogleAuth({
         credentials: credentials,
         scopes: ['https://www.googleapis.com/auth/calendar']
