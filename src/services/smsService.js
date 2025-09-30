@@ -42,8 +42,16 @@ class SMSService {
         await this.initialize();
       }
 
+      console.log(`📱 [SMS_SERVICE] ==========================================`);
+      console.log(`📱 [SMS_SERVICE] Attempting to send SMS`);
+      console.log(`📱 [SMS_SERVICE] To: ${to}`);
+      console.log(`📱 [SMS_SERVICE] From: ${this.smsPhoneNumber}`);
+      console.log(`📱 [SMS_SERVICE] Full Message:\n"${message}"`);
+      console.log(`📱 [SMS_SERVICE] Message Length: ${message.length} characters`);
+      console.log(`📱 [SMS_SERVICE] ==========================================`);
+
       if (!this.twilioClient || this.twilioClient.mock) {
-        console.log('📱 [MOCK] SMS to:', {
+        console.log('📱 [MOCK] SMS Message:', {
           to: to,
           from: this.smsPhoneNumber,
           message: message
@@ -57,16 +65,16 @@ class SMSService {
         to: to
       });
 
-      console.log('✅ SMS sent successfully:', {
-        to: to,
-        from: this.smsPhoneNumber,
-        messageId: messageResponse.sid
-      });
+      console.log(`✅ [SMS_SERVICE] SMS sent successfully!`);
+      console.log(`✅ [SMS_SERVICE] Message SID: ${messageResponse.sid}`);
+      console.log(`✅ [SMS_SERVICE] To: ${to}`);
+      console.log(`✅ [SMS_SERVICE] From: ${this.smsPhoneNumber}`);
 
       return { success: true, messageId: messageResponse.sid };
 
     } catch (error) {
-      console.error('❌ Failed to send SMS:', error);
+      console.error('❌ [SMS_SERVICE] Failed to send SMS:', error.message);
+      console.error('❌ [SMS_SERVICE] Error details:', error);
       return { success: false, error: error.message };
     }
   }

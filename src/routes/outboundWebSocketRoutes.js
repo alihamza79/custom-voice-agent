@@ -37,7 +37,17 @@ function handleWebSocketTwiMLGeneration(req, res) {
     console.log(`📞 [TWiML_GENERATION] Request body:`, req.body);
     
     // CRITICAL: Check if this is a delay notification call
-    const delayData = callSid ? sessionManager.getDelayDataByCallSid(callSid) : null;
+    // Try to get delay data by CallSid first, then by outboundStreamSid
+    let delayData = callSid ? sessionManager.getDelayDataByCallSid(callSid) : null;
+    
+    // If not found by CallSid, try to get from the outbound session
+    if (!delayData && outboundStreamSid) {
+      const outboundSession = sessionManager.getSession(outboundStreamSid);
+      delayData = outboundSession?.delayCallData || null;
+      if (delayData) {
+        console.log(`📞 [TWiML_GENERATION] ✅ Found delay data via outboundStreamSid: ${outboundStreamSid}`);
+      }
+    }
     
     if (delayData) {
       console.log(`📞 [TWiML_GENERATION] ✅ This is a DELAY NOTIFICATION call for customer: ${delayData.customerName}`);

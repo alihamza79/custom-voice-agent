@@ -177,9 +177,26 @@ function detectLanguage(text, previousLanguage = null) {
   }
   
   // Find language with highest score
-  const detectedLang = Object.keys(scores).reduce((a, b) => 
-    scores[a] > scores[b] ? a : b
-  );
+  // When there's a tie, prefer English (or previousLanguage if it was English)
+  const maxScore = Math.max(...Object.values(scores));
+  const topLanguages = Object.keys(scores).filter(lang => scores[lang] === maxScore);
+  
+  let detectedLang;
+  if (topLanguages.length > 1) {
+    // Tie detected - prefer English, then previous language, then first in list
+    if (topLanguages.includes('english')) {
+      detectedLang = 'english';
+      console.log(`🌐 Language tie detected, defaulting to English (scores: ${JSON.stringify(scores)})`);
+    } else if (previousLanguage && topLanguages.includes(previousLanguage)) {
+      detectedLang = previousLanguage;
+      console.log(`🌐 Language tie detected, maintaining ${previousLanguage} (scores: ${JSON.stringify(scores)})`);
+    } else {
+      detectedLang = topLanguages[0];
+      console.log(`🌐 Language tie detected, using ${detectedLang} (scores: ${JSON.stringify(scores)})`);
+    }
+  } else {
+    detectedLang = topLanguages[0];
+  }
   
   // Require minimum confidence
   if (scores[detectedLang] === 0) {

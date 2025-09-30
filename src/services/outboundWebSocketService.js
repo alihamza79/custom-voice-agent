@@ -37,7 +37,7 @@ class OutboundWebSocketService {
   }
 
   // Make WebSocket-based outbound call to customer
-  async makeWebSocketCallToCustomer(customerPhone, appointmentDetails, newTime, teammateCallSid) {
+  async makeWebSocketCallToCustomer(customerPhone, appointmentDetails, newTime, teammateCallSid, delayData = null) {
     try {
       console.log(`📞 [OUTBOUND_CALL_START] ==========================================`);
       console.log(`📞 [OUTBOUND_CALL_START] Starting outbound call process`);
@@ -60,6 +60,7 @@ class OutboundWebSocketService {
       console.log(`📞 [OUTBOUND_CALL_START] Appointment: ${appointmentDetails.summary}`);
       console.log(`📞 [OUTBOUND_CALL_START] New Time: ${newTime}`);
       console.log(`📞 [OUTBOUND_CALL_START] Teammate Call SID: ${teammateCallSid}`);
+      console.log(`📞 [OUTBOUND_CALL_START] Is Delay Notification: ${!!delayData}`);
       
       globalTimingLogger.startOperation('WebSocket Outbound Call to Customer');
       
@@ -87,6 +88,12 @@ class OutboundWebSocketService {
         }
         sessionManager.createSession(outboundStreamSid);
         console.log(`📞 [OUTBOUND_CALL_START] Session created successfully`);
+        
+        // CRITICAL: Store delay data in outbound session if this is a delay notification call
+        if (delayData) {
+          console.log(`📞 [OUTBOUND_CALL_START] Storing delay data in outbound session`);
+          sessionManager.setDelayCallData(outboundStreamSid, delayData);
+        }
       } catch (sessionError) {
         console.log(`📞 [OUTBOUND_CALL_START] ❌ Error creating session:`, sessionError.message);
         throw new Error(`Failed to create session: ${sessionError.message}`);

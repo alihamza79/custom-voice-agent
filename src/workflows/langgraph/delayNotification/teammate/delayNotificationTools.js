@@ -2,7 +2,7 @@
 const { DynamicStructuredTool, DynamicTool } = require("@langchain/core/tools");
 const { z } = require("zod");
 const googleCalendarService = require('../../../../services/googleCalendarService');
-const outboundCallSession = require('../../../../services/outboundCallSession');
+const outboundWebSocketService = require('../../../../services/outboundWebSocketService');
 const smsService = require('../../../../services/smsService');
 const sessionManager = require('../../../../services/sessionManager');
 const fillerAudioService = require('../../../../services/fillerAudioService');
@@ -375,11 +375,19 @@ Respond with ONLY a JSON object.`;
         // Store call data in teammate session
         sessionManager.setDelayCallData(streamSid, delayData);
         
-        // Make the outbound call
-        const callResult = await outboundCallSession.makeCallToCustomer(
+        // Get teammate CallSid from session
+        const teammateSession = sessionManager.getSession(streamSid);
+        const teammateCallSid = teammateSession?.callSid;
+        
+        // Make the outbound WebSocket call (use the correct service that matches the status handler)
+        console.log(`📞 [DELAY_NOTIFICATION] Initiating WebSocket outbound call to ${customerPhone}`);
+        console.log(`📞 [DELAY_NOTIFICATION] TwiML URL: ${process.env.BASE_URL}/outbound-websocket-twiml`);
+        const callResult = await outboundWebSocketService.makeWebSocketCallToCustomer(
           customerPhone,
           { summary: appointmentSummary },
-          alternativeOption
+          alternativeOption,
+          teammateCallSid,
+          delayData  // Pass the full delay data so it's available in TwiML generation
         );
         
         // CRITICAL: Map CallSid to delay data so TwiML generation can find it

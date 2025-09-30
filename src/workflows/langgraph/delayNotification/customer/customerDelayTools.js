@@ -328,6 +328,14 @@ function createCustomerDelayTools(streamSid = null) {
       smsMessage = `⚠️ ${delayData.customerName} declined both options${reason ? ` (${reason})` : ''}. Please contact them directly to arrange a new time.`;
     }
 
+    console.log(`📱 [SMS_CONTENT] ==========================================`);
+    console.log(`📱 [SMS_CONTENT] Sending SMS to teammate`);
+    console.log(`📱 [SMS_CONTENT] To: ${teammatePhone}`);
+    console.log(`📱 [SMS_CONTENT] Message: "${smsMessage}"`);
+    console.log(`📱 [SMS_CONTENT] Customer: ${delayData.customerName}`);
+    console.log(`📱 [SMS_CONTENT] Choice: ${customerChoice}`);
+    console.log(`📱 [SMS_CONTENT] ==========================================`);
+
     await smsService.sendSMS(teammatePhone, smsMessage);
     console.log(`✅ [CUSTOMER_DELAY_TOOL] SMS sent successfully to ${teammatePhone}`);
     
