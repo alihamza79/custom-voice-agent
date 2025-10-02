@@ -15,7 +15,8 @@ class TTSPrewarmer {
     this.lastPrewarmTime = 0;
     this.prewarmFrequency = 60000; // 60 seconds - less frequent to reduce load
     this.prewarmText = "Hi"; // Very short text for prewarming
-    this.prewarmTimeout = 5000; // 5 seconds timeout instead of default
+    this.prewarmTimeout = 8000; // 8 seconds timeout - more generous for network variability
+    this.maxRetries = 2; // Retry failed prewarming attempts
   }
 
   /**
@@ -101,9 +102,9 @@ class TTSPrewarmer {
   }
 
   /**
-   * Synthesize prewarming text to keep connection warm
+   * Synthesize prewarming text to keep connection warm (with retry logic)
    */
-  async synthesizePrewarmText() {
+  async synthesizePrewarmText(retryCount = 0) {
     return new Promise((resolve, reject) => {
       if (!this.prewarmSynthesizer) {
         reject(new Error('Prewarm synthesizer not available'));
@@ -112,7 +113,7 @@ class TTSPrewarmer {
 
       const timeoutId = setTimeout(() => {
         reject(new Error('Prewarm synthesis timeout'));
-      }, this.prewarmTimeout); // Use class property for timeout
+      }, this.prewarmTimeout);
 
       this.prewarmSynthesizer.speakTextAsync(
         this.prewarmText,
@@ -129,6 +130,14 @@ class TTSPrewarmer {
           reject(new Error(`Prewarm synthesis error: ${error}`));
         }
       );
+    }).catch(async (error) => {
+      // Retry logic for transient failures
+      if (retryCount < this.maxRetries) {
+        console.log(`🔄 TTS PREWARMER: Retry ${retryCount + 1}/${this.maxRetries} after failure: ${error.message}`);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 sec before retry
+        return this.synthesizePrewarmText(retryCount + 1);
+      }
+      throw error; // Max retries exceeded
     });
   }
 
@@ -171,6 +180,7 @@ class TTSPrewarmer {
 
   /**
    * Trigger an immediate prewarm (e.g., when a call starts)
+   * Non-blocking - failures don't affect call flow
    */
   async triggerPrewarm() {
     const now = Date.now();
@@ -178,12 +188,12 @@ class TTSPrewarmer {
     
     // Only prewarm if it's been more than 5 seconds since last prewarm
     if (timeSinceLastPrewarm < 5000) {
-      console.log('🔥 TTS PREWARMER: Recently prewarmed, skipping');
+      // console.log('🔥 TTS PREWARMER: Recently prewarmed, skipping');
       return;
     }
 
     try {
-      console.log('🔥 TTS PREWARMER: Triggered warmup for incoming call...');
+      // console.log('🔥 TTS PREWARMER: Triggered warmup for incoming call...');
       const startTime = Date.now();
       
       await this.synthesizePrewarmText();
@@ -192,9 +202,14 @@ class TTSPrewarmer {
       this.lastPrewarmTime = now;
       this.isPrewarmed = true;
       
-      console.log(`✅ TTS PREWARMER: Triggered warmup completed in ${duration}ms`);
+      // Only log success if duration is concerning (helps debug issues)
+      if (duration > 3000) {
+        console.log(`⚠️ TTS PREWARMER: Warmup took ${duration}ms (slower than expected)`);
+      }
     } catch (error) {
-      console.warn('⚠️ TTS PREWARMER: Triggered warmup failed:', error.message);
+      // Graceful degradation - log but don't block
+      // Main TTS will still work, just might have slightly higher first-response latency
+      console.log('⚠️ TTS PREWARMER: Warmup failed (non-critical):', error.message);
       this.isPrewarmed = false;
     }
   }

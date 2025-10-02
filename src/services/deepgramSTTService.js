@@ -31,18 +31,35 @@ class DeepgramSTTService {
     const createConnection = () => {
       this.globalConnections++;
       
+      // 🔥 MULTILINGUAL TURN DETECTION CONFIG
+      // Map internal language codes to Deepgram language codes
+      const languageMap = {
+        'en': 'en',
+        'en-US': 'en-US',
+        'english': 'en',
+        'hi': 'hi',
+        'hindi': 'hi',
+        'ur': 'hi', // Use Hindi for Urdu (similar phonetics, Deepgram doesn't have Urdu)
+        'urdu': 'hi',
+        'de': 'de',
+        'german': 'de',
+        'es': 'es',
+        'spanish': 'es',
+        'fr': 'fr',
+        'french': 'fr',
+      };
+      
+      const deepgramLanguage = languageMap[language] || languageMap[language?.split('-')[0]] || 'en';
+      
       const deepgram = this.client.listen.live({
-        // Model - Enhanced model for better accuracy
-        model: "nova-3",
-        language: "en", // Use multi-language for best compatibility
-        smart_format: true,
+        // 🔥 NOVA-2: Best multilingual model with built-in turn detection
+        model: "nova-2",
+        language: deepgramLanguage,
         
-        // Enhanced accuracy settings
+        // 🔥 SMART FORMAT: Automatic sentence boundary detection
+        smart_format: true,  // Intelligently adds punctuation and detects sentence ends
         punctuate: true,
-        profanity_filter: false,
-        redact: false,
-        diarize: false,
-        
+        paragraphs: false,   // Keep it single-line for real-time
         
         // Audio settings - optimized for Twilio μ-law
         encoding: "mulaw",
@@ -50,31 +67,36 @@ class DeepgramSTTService {
         channels: 1,
         multichannel: false,
         
-        // ENHANCED: Better speech detection settings for natural conversation
+        // 🔥 DUAL-MODE TURN DETECTION (Deepgram Best Practice)
+        // Using BOTH endpointing (VAD-based) + utterance_end_ms (word-timing based)
+        // per https://developers.deepgram.com/docs/understanding-end-of-speech-detection
         no_delay: true,
-        interim_results: true,
-        endpointing: 500, // Increased for better speech detection - reduce false positives
-        utterance_end_ms: 1500, // Increased to 1.5 seconds - wait longer for complete thoughts
-        vad_events: true, // Enable Voice Activity Detection events
+        interim_results: true, // Required for utterance_end_ms
         
-        // ENHANCED: Noise filtering
-        filler_words: false, // Remove um, uh, etc.
+        // Endpointing: VAD-based silence detection (works well in quiet environments)
+        endpointing: 400, // Milliseconds of silence to trigger speech_final=true
+        
+        // UtteranceEnd: Word-timing based (works with background noise)
+        // Deepgram recommends >= 1000ms for best results
+        utterance_end_ms: 1500, // Gap between words to trigger UtteranceEnd event
+        
+        // Voice Activity Detection events
+        vad_events: true,
+        
+        // Quality settings
+        filler_words: true, // Keep filler words for better context understanding
         profanity_filter: false,
         redact: false,
-        
-        // ENHANCED: Quality thresholds  
-        confidence: 0.5, // Reduced threshold for better capture
+        diarize: false,
         
         // Connection settings
         keep_alive: true,
         
-        // Enhanced word processing
+        // Enhanced processing
         numerals: true,
-        punctuate: true,
-        diarize: false,
         
-        // Search terms for meeting context (helps with accuracy)
-        search: ["meeting", "appointment", "schedule", "time", "date", "hour", "minute"],
+        // Search terms for better accuracy (domain-specific)
+        search: ["meeting", "appointment", "schedule", "delay", "reschedule", "cancel", "time", "date", "hour", "minute", "checkup"],
         
        
       }, "wss://api.deepgram.com/v1/listen");

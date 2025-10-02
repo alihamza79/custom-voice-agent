@@ -99,9 +99,12 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
               const utterance = is_finals.join(" ");
               is_finals.length = 0; // Clear array
               
+              // Mark that we received speech_final (for dual-mode turn detection)
+              mediaStream._hasSpeechFinal = true;
+              
               // Double-check the complete utterance is valid
               if (isValidTranscript(utterance, confidence)) {
-                globalTimingLogger.logMoment(`Speech final: "${utterance}"`);
+                globalTimingLogger.logMoment(`Speech final (VAD): "${utterance}"`);
                 mediaStream.llmStart = Date.now();
                 sseService.broadcast('transcript_final', { utterance });
                 
@@ -168,15 +171,25 @@ function setupSTTListeners(deepgram, mediaStream, is_finals, handleReconnect) {
     });
 
     // Utterance end processing with validation
+    // Per Deepgram docs: Use dual-trigger approach
+    // - Trigger on speech_final=true (may be followed by UtteranceEnd, ignore it)
+    // - Trigger on UtteranceEnd ONLY if no preceding speech_final
     deepgram.addListener(LiveTranscriptionEvents.UtteranceEnd, (data) => {
       if (is_finals.length > 0) {
-        globalTimingLogger.logMoment('Utterance end detected');
+        // Check if we already got speech_final for this utterance
+        if (mediaStream._hasSpeechFinal) {
+          globalTimingLogger.logMoment('UtteranceEnd received after speech_final - ignoring (already processed)');
+          mediaStream._hasSpeechFinal = false; // Reset flag
+          return; // Don't double-process
+        }
+        
+        globalTimingLogger.logMoment('UtteranceEnd detected (word-timing based, no prior speech_final)');
         const utterance = is_finals.join(" ");
         is_finals.length = 0; // Clear array
         
         // Validate utterance before processing
         if (isValidTranscript(utterance)) {
-          globalTimingLogger.logMoment(`Utterance end final: "${utterance}"`);
+          globalTimingLogger.logMoment(`Utterance end (word-timing): "${utterance}"`);
           mediaStream.llmStart = Date.now();
           sseService.broadcast('transcript_final', { utterance });
           
